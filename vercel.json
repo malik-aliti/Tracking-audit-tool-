@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "buildCommand": "next build",
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/scan/route.ts": {"maxDuration": 60},
+    "src/app/api/analyze/route.ts": {"maxDuration": 60}
+  }
+}
