@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { analyzeTrackingData, calculateScore } from '@/lib/analyzer'
 import type { ScanRawData, AuditReport, PlatformData, AISummary } from '@/types'
+import type { GTMData } from '@/lib/gtm'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   try {
-    const { scanData, platformData }: { scanData: ScanRawData; platformData?: PlatformData } = await req.json()
-    const checks = analyzeTrackingData(scanData, platformData)
+    const { scanData, platformData, gtmData }: { scanData: ScanRawData; platformData?: PlatformData; gtmData?: GTMData } = await req.json()
+    const checks = analyzeTrackingData(scanData, platformData, gtmData)
     const score = calculateScore(checks)
-    const aiSummary = await generateAISummary(scanData, checks, score)
+    const aiSummary = await generateAISummary(scanData, checks, score, gtmData)
     const report: AuditReport = {
       id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       url: scanData.url, createdAt: new Date().toISOString(),
@@ -23,22 +24,24 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function generateAISummary(raw: ScanRawData, checks: any[], score: any): Promise<AISummary> {
+async function generateAISummary(raw: ScanRawData, checks: any[], score: any, gtmData?: GTMData): Promise<AISummary> {
   const failChecks = checks.filter((c: any) => c.status === 'fail')
   const critChecks = checks.filter((c: any) => c.impact === 'critical')
-  const prompt = `Tu es expert en tracking digital. Analyse ce rapport pour ${raw.url} et génère un résumé JSON.
+  const gtmSummary = gtmData ? `GTM API: ${gtmData.checks.totalTagCount} tags, ${gtmData.checks.pausedTags.length} en pause, ${gtmData.checks.tagsWithoutTrigger.length} sans déclencheur, Consent template: ${gtmData.checks.hasConsentModeTemplate ? gtmData.checks.consentModeTemplateName : 'absent'}` : 'GTM non connecté'
+
+  const prompt = `Expert tracking digital. Analyse ce rapport pour ${raw.url}.
 
 Score: ${score.global}/100 | OK:${score.okCount} Warn:${score.warnCount} Fail:${score.failCount}
 CMP: ${raw.cmpDetected || 'absent'} | GTM: ${raw.gtmContainers.filter((c:string)=>c.startsWith('GTM-')).join(',') || 'absent'}
-GA4: ${raw.ga4Ids.join(',') || 'absent'} | Meta: ${raw.metaPixelIds.join(',') || 'absent'}
-CAPI: ${raw.hasCAPI} | Consent Mode v2: ${raw.consentDefault ? 'oui' : 'non'}
-Formulaires: ${raw.forms.length} | CTAs: ${raw.ctaElements} | Erreurs JS: ${raw.jsErrors.length}
+GA4: ${raw.ga4Ids.join(',') || 'absent'} | Meta Pixel: ${raw.metaPixelIds.join(',') || 'absent'}
+CAPI: ${raw.hasCAPI} | Consent Mode v2: ${raw.consentDefault ? 'configuré' : 'absent'}
+${gtmSummary}
 
 Critiques: ${critChecks.map((c:any)=>c.finding).join(' | ') || 'Aucun'}
 Échecs: ${failChecks.slice(0,3).map((c:any)=>c.finding).join(' | ') || 'Aucun'}
 
 Réponds UNIQUEMENT en JSON (sans backticks):
-{"headline":"Résumé en 1 phrase (max 120 chars)","priority_issues":["issue1","issue2","issue3"],"quick_wins":["action1 (<1h)","action2","action3"],"strengths":["point fort 1","point fort 2"],"estimated_data_loss":"% estimé de conversions/données perdues"}`
+{"headline":"1 phrase max 120 chars","priority_issues":["issue1","issue2","issue3"],"quick_wins":["action<1h 1","action 2","action 3"],"strengths":["point fort 1","point fort 2"],"estimated_data_loss":"% estimé de conversions/données perdues"}`
 
   try {
     const response = await anthropic.messages.create({
@@ -46,10 +49,10 @@ Réponds UNIQUEMENT en JSON (sans backticks):
       messages: [{ role: 'user', content: prompt }],
     })
     const text = response.content.find((b: any) => b.type === 'text')?.text || '{}'
-    return JSON.parse(text.replace(/\`\`\`json|\`\`\`/g, '').trim())
+    return JSON.parse(text.replace(/```json|```/g, '').trim())
   } catch {
     return {
-      headline: `Score de tracking ${score.global}/100 — ${score.failCount} problème(s) à corriger`,
+      headline: `Score ${score.global}/100 — ${score.failCount} problème(s) à corriger`,
       priority_issues: failChecks.slice(0, 3).map((c: any) => c.finding),
       quick_wins: checks.filter((c: any) => c.status === 'warn').slice(0, 3).map((c: any) => c.actions[0] || ''),
       strengths: checks.filter((c: any) => c.status === 'ok').slice(0, 2).map((c: any) => c.label),
