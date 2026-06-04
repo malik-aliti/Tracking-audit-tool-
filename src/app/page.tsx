@@ -14,6 +14,10 @@ interface AuditReport {
   aiSummary: { headline: string; priority_issues: string[]; quick_wins: string[]; strengths: string[]; estimated_data_loss: string }
   platformData?: any
 }
+interface Connections {
+  google?: { accessToken: string; propertyName?: string; measurementId?: string }
+  meta?: { accessToken: string; pixelName?: string }
+}
 
 const ST: Record<string, any> = {
   ok:     { bg:'#f0fdf4', border:'#86efac', text:'#4ade80', icon:'✓' },
@@ -33,6 +37,7 @@ const TAG_COLORS: Record<string, [string,string]> = {
   CAPI:['#ede9fe','#5b21b6'], 'Advanced Matching':['#ede9fe','#5b21b6'],
   Attribution:['#fce7f3','#9d174d'], QA:['#fee2e2','#991b1b'],
   Conversions:['#e0e7ff','#3730a3'], 'Micro-signaux':['#d1fae5','#065f46'],
+  Performance:['#fef3c7','#92400e'], Platform:['#dbeafe','#1e40af'],
 }
 
 function ScoreRing({ score, size=80 }: { score:number; size?:number }) {
@@ -131,7 +136,7 @@ function FixPlan({checks}: {checks:CheckResult[]}) {
     <div>
       <div style={{background:'#7f1d1d',border:'1px solid #ef4444',borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',gap:10}}>
         <span style={{fontSize:20}}>🚨</span>
-        <div><div style={{fontSize:12,fontWeight:700,color:'#fca5a5',marginBottom:2}}>{issues.filter(i=>i.impact==='critical').length} critique(s) · {issues.filter(i=>i.impact==='high').length} haute(s) priorité</div><div style={{fontSize:11,color:'#fca5a5',opacity:.8}}>Commencer par les correctifs URGENT.</div></div>
+        <div><div style={{fontSize:12,fontWeight:700,color:'#fca5a5',marginBottom:2}}>{issues.filter(i=>i.impact==='critical').length} critique(s) · {issues.filter(i=>i.impact==='high').length} haute(s)</div><div style={{fontSize:11,color:'#fca5a5',opacity:.8}}>Commencer par les correctifs URGENT.</div></div>
       </div>
       {issues.map((issue,idx)=>(
         <div key={issue.id} style={{background:'#0f172a',border:`1px solid ${issue.status==='fail'?'#991b1b':'#334155'}`,borderRadius:12,marginBottom:10,overflow:'hidden'}}>
@@ -145,26 +150,16 @@ function FixPlan({checks}: {checks:CheckResult[]}) {
               <div style={{fontSize:11,color:'#64748b',lineHeight:1.5}}>{issue.finding}</div>
               <div style={{display:'flex',gap:3,marginTop:6,flexWrap:'wrap'}}>{issue.tags.map(t=><TagPill key={t} tag={t}/>)}</div>
             </div>
-            <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-              {done.has(issue.id)&&<span style={{fontSize:10,fontWeight:700,color:'#4ade80'}}>✓ Corrigé</span>}
-              <span style={{fontSize:10,color:'#475569'}}>{openIdx===idx?'▲':'▼'}</span>
-            </div>
+            <span style={{fontSize:10,color:'#475569',flexShrink:0}}>{openIdx===idx?'▲':'▼'}</span>
           </div>
           {openIdx===idx&&(
             <div style={{padding:'0 18px 16px',borderTop:'1px solid #1e293b'}}>
-              <div style={{fontSize:9,fontWeight:700,color:'#475569',letterSpacing:'.1em',textTransform:'uppercase',margin:'14px 0 8px'}}>Étapes de correction</div>
               {issue.actions.map((a,i)=>(
-                <div key={i} style={{display:'flex',gap:8,padding:'8px 12px',marginBottom:6,background:'#1e293b',border:'1px solid #334155',borderRadius:8,fontSize:12,color:'#e2e8f0',lineHeight:1.6}}>
+                <div key={i} style={{display:'flex',gap:8,padding:'8px 12px',marginBottom:6,marginTop:i===0?12:0,background:'#1e293b',border:'1px solid #334155',borderRadius:8,fontSize:12,color:'#e2e8f0',lineHeight:1.6}}>
                   <span style={{fontWeight:800,color:'#818cf8',minWidth:18,flexShrink:0}}>{i+1}.</span><span>{a}</span>
                 </div>
               ))}
-              {issue.consoleCommands?.map((cmd,i)=>(
-                <div key={i} style={{position:'relative',marginBottom:6,marginTop:6}}>
-                  <pre style={{background:'#020617',border:'1px solid #0f172a',borderRadius:8,padding:'9px 42px 9px 14px',fontSize:11,color:'#38bdf8',fontFamily:'Menlo,monospace',lineHeight:1.7,overflowX:'auto',margin:0,whiteSpace:'pre-wrap'}}>{cmd}</pre>
-                  <CopyBtn text={cmd}/>
-                </div>
-              ))}
-              <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}>
+              <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}>
                 <button onClick={()=>setDone(prev=>{const n=new Set(prev);done.has(issue.id)?n.delete(issue.id):n.add(issue.id);return n})} style={{padding:'7px 16px',fontSize:11,fontWeight:700,background:done.has(issue.id)?'#059669':'#1e293b',color:done.has(issue.id)?'white':'#64748b',border:`1px solid ${done.has(issue.id)?'#059669':'#334155'}`,borderRadius:8,cursor:'pointer'}}>
                   {done.has(issue.id)?'✓ Correctif appliqué':'Marquer comme corrigé'}
                 </button>
@@ -177,6 +172,8 @@ function FixPlan({checks}: {checks:CheckResult[]}) {
   )
 }
 
+const STORAGE_KEY = 'trackaudit_connections'
+
 export default function Home() {
   const [url,setUrl]=useState('')
   const [phase,setPhase]=useState<'idle'|'scanning'|'analyzing'|'done'|'error'>('idle')
@@ -186,87 +183,119 @@ export default function Home() {
   const [activeTab,setActiveTab]=useState<'audit'|'fixes'|'platforms'>('audit')
   const [openSections,setOpenSections]=useState<Record<string,boolean>>({})
   const [modalCheck,setModalCheck]=useState<CheckResult|null>(null)
-  const [connections,setConnections]=useState<any>({})
+  const [connections,setConnections]=useState<Connections>({})
 
-  // OAuth callbacks
+  // ── Persist connections in localStorage ──────────────────────────────────
+  useEffect(()=>{
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) setConnections(JSON.parse(saved))
+    } catch {}
+  },[])
+
+  const saveConnections = useCallback((conn: Connections) => {
+    setConnections(conn)
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(conn)) } catch {}
+  },[])
+
+  // ── OAuth callbacks ───────────────────────────────────────────────────────
   useEffect(()=>{
     const p=new URLSearchParams(window.location.search)
     const payload=p.get('payload')
     if(payload){
       try{
         const d=JSON.parse(decodeURIComponent(payload))
-        if(d.platform==='google') setConnections((prev:any)=>({...prev,google:{accessToken:d.accessToken,propertyName:d.ga4PropertyName,measurementId:d.ga4MeasurementId}}))
-        else if(d.platform==='meta') setConnections((prev:any)=>({...prev,meta:{accessToken:d.accessToken,pixelName:d.pixelName}}))
+        if(d.platform==='google'){
+          saveConnections({...connections, google:{ accessToken:d.accessToken, propertyName:d.ga4PropertyName, measurementId:d.ga4MeasurementId }})
+        } else if(d.platform==='meta'){
+          saveConnections({...connections, meta:{ accessToken:d.accessToken, pixelName:d.pixelName }})
+        }
       }catch{}
       window.history.replaceState({},'','/')
     }
     const err=p.get('error')
-    if(err) setError(`Erreur de connexion : ${err}`)
+    if(err) setError(`Erreur connexion : ${err}`)
   },[])
 
   useEffect(()=>{
     if(report){const cats=[...new Set(report.checks.map(c=>c.category))];setOpenSections(Object.fromEntries(cats.map(c=>[c,true])))}
   },[report])
 
-  // OAuth — ouvre une popup pour ne pas quitter la page
   const connectGoogle=useCallback(async()=>{
     try{const r=await fetch('/api/google');const{authUrl}=await r.json();window.location.href=authUrl}
-    catch(e){setError('Erreur connexion Google — vérifiez les variables GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans .env.local')}
+    catch{setError('Erreur connexion Google')}
   },[])
 
   const connectMeta=useCallback(async()=>{
     try{const r=await fetch('/api/meta');const{authUrl}=await r.json();window.location.href=authUrl}
-    catch(e){setError('Erreur connexion Meta — vérifiez les variables META_APP_ID et META_APP_SECRET dans .env.local')}
+    catch{setError('Erreur connexion Meta')}
   },[])
 
+  const disconnectGoogle=useCallback(()=>{
+    const c={...connections}; delete c.google
+    saveConnections(c)
+  },[connections,saveConnections])
+
+  const disconnectMeta=useCallback(()=>{
+    const c={...connections}; delete c.meta
+    saveConnections(c)
+  },[connections,saveConnections])
+
+  // ── Run audit ─────────────────────────────────────────────────────────────
+  const runAnalysis = useCallback(async(scanData: any) => {
+    setPhase('analyzing')
+    setPhaseMsg('Connexion aux plateformes et analyse IA...')
+    try{
+      let platformData: any = undefined
+      let gtmData: any = undefined
+
+      if(connections.google?.accessToken){
+        try{
+          setPhaseMsg('Récupération des données GA4, Google Ads et GTM...')
+          const r=await fetch('/api/google/ga4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:connections.google.accessToken})})
+          const j=await r.json()
+          if(j.success){
+            platformData={...platformData, ga4:j.ga4, googleAds:j.googleAds}
+            gtmData=j.gtm
+          }
+        }catch{}
+      }
+
+      if(connections.meta?.accessToken){
+        try{
+          const r=await fetch('/api/meta/pixel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:connections.meta.accessToken})})
+          const j=await r.json()
+          if(j.success) platformData={...platformData, meta:j.meta}
+        }catch{}
+      }
+
+      setPhaseMsg('Analyse IA — 30+ vérifications...')
+      const analyzeRes=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scanData, platformData, gtmData})})
+      const analyzeJson=await analyzeRes.json()
+      if(!analyzeJson.success) throw new Error(analyzeJson.error||'Erreur analyse')
+      setReport(analyzeJson.report)
+      setPhase('done')
+    }catch(err:any){setError(err.message||'Erreur');setPhase('error')}
+  },[connections])
+
   const runAudit=useCallback(async()=>{
-    if(!url.trim())return
+    if(!url.trim()) return
     setError('');setReport(null);setPhase('scanning')
     setPhaseMsg('Scan de la page en cours...')
     try{
       const targetUrl=url.startsWith('http')?url:`https://${url}`
-      // Scan
       const scanRes=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:targetUrl})})
       const scanJson=await scanRes.json()
-      if(!scanJson.success)throw new Error(scanJson.error||'Erreur scan')
-      // Platform data
-      setPhase('analyzing');setPhaseMsg('Analyse IA — 30+ vérifications en cours...')
-      let platformData:any=undefined
-      if(connections.google?.accessToken){try{const r=await fetch('/api/google/ga4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:connections.google.accessToken})});const j=await r.json();if(j.success)platformData={...platformData,ga4:j.ga4,googleAds:j.googleAds}}catch{}}
-      if(connections.meta?.accessToken){try{const r=await fetch('/api/meta/pixel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:connections.meta.accessToken})});const j=await r.json();if(j.success)platformData={...platformData,meta:j.meta}}catch{}}
-      // Analyze
-      const analyzeRes=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scanData:scanJson.data,platformData})})
-      const analyzeJson=await analyzeRes.json()
-      if(!analyzeJson.success)throw new Error(analyzeJson.error||'Erreur analyse')
-      setReport(analyzeJson.report);setPhase('done')
+      if(!scanJson.success) throw new Error(scanJson.error||'Erreur scan')
+      await runAnalysis(scanJson.data)
     }catch(err:any){setError(err.message||'Erreur');setPhase('error')}
-  },[url,connections])
+  },[url,runAnalysis])
 
-  // Scan depuis les données navigateur (Claude in Chrome)
-  const runWithBrowserData=useCallback(async(browserData:any)=>{
-    setError('');setReport(null);setPhase('scanning')
-    setPhaseMsg('Données navigateur reçues — analyse en cours...')
-    try{
-      const scanRes=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({browserData})})
-      const scanJson=await scanRes.json()
-      if(!scanJson.success)throw new Error(scanJson.error||'Erreur scan')
-      setPhase('analyzing');setPhaseMsg('Analyse IA — 30+ vérifications...')
-      let platformData:any=undefined
-      if(connections.google?.accessToken){try{const r=await fetch('/api/google/ga4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:connections.google.accessToken})});const j=await r.json();if(j.success)platformData={...platformData,ga4:j.ga4,googleAds:j.googleAds}}catch{}}
-      if(connections.meta?.accessToken){try{const r=await fetch('/api/meta/pixel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:connections.meta.accessToken})});const j=await r.json();if(j.success)platformData={...platformData,meta:j.meta}}catch{}}
-      const analyzeRes=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scanData:scanJson.data,platformData})})
-      const analyzeJson=await analyzeRes.json()
-      if(!analyzeJson.success)throw new Error(analyzeJson.error||'Erreur analyse')
-      setReport(analyzeJson.report);setPhase('done')
-      setUrl(browserData.url||'')
-    }catch(err:any){setError(err.message||'Erreur');setPhase('error')}
-  },[connections])
-
-  // Expose pour usage externe (ex: Claude in Chrome peut appeler window.__trackaudit(data))
+  // Expose pour injection depuis Claude in Chrome
   useEffect(()=>{
-    ;(window as any).__trackaudit=runWithBrowserData
+    ;(window as any).__trackaudit = runAnalysis
     return()=>{ delete (window as any).__trackaudit }
-  },[runWithBrowserData])
+  },[runAnalysis])
 
   const checks=report?.checks||[]
   const categories=[...new Set(checks.map(c=>c.category))]
@@ -275,6 +304,16 @@ export default function Home() {
   const okCount=checks.filter(c=>c.status==='ok').length
   const manualCount=checks.filter(c=>c.status==='manual').length
 
+  const PlatformBtn = ({key:k, icon, label, connected, onClick, onDisconnect}: any) => (
+    <div style={{display:'flex',alignItems:'center',gap:4}}>
+      <button onClick={onClick} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:connected?'#052e16':'#1e293b',border:`1px solid ${connected?'#16a34a':'#334155'}`,borderRadius:connected?'8px 0 0 8px':8,cursor:'pointer',fontSize:11,fontWeight:600,color:connected?'#4ade80':'#94a3b8',transition:'all .2s'}}>
+        <span>{icon}</span>{label}
+        <span style={{width:6,height:6,borderRadius:'50%',background:connected?'#22c55e':'#475569'}}/>
+      </button>
+      {connected&&<button onClick={onDisconnect} style={{padding:'6px 8px',background:'#1e293b',border:'1px solid #334155',borderLeft:'none',borderRadius:'0 8px 8px 0',cursor:'pointer',fontSize:10,color:'#475569'}}>✕</button>}
+    </div>
+  )
+
   return (
     <div style={{fontFamily:'DM Sans,system-ui,sans-serif',background:'#020617',minHeight:'100vh',color:'white'}}>
       {/* NAVBAR */}
@@ -282,15 +321,11 @@ export default function Home() {
         <div style={{maxWidth:960,margin:'0 auto',display:'flex',alignItems:'center',gap:12}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <div style={{width:34,height:34,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',borderRadius:9,display:'flex',alignItems:'center',justifyContent:'center',fontSize:17}}>📡</div>
-            <div><div style={{fontSize:15,fontWeight:800,letterSpacing:'-0.03em'}}>TrackAudit</div><div style={{fontSize:9,color:'#475569'}}>Diagnostic tracking · RGPD · GA4 · Meta</div></div>
+            <div><div style={{fontSize:15,fontWeight:800,letterSpacing:'-0.03em'}}>TrackAudit</div><div style={{fontSize:9,color:'#475569'}}>Diagnostic tracking · RGPD · GA4 · GTM · Meta</div></div>
           </div>
           <div style={{marginLeft:'auto',display:'flex',gap:8}}>
-            {[{key:'google',icon:'🔵',label:'Google',onClick:connectGoogle},{key:'meta',icon:'🔷',label:'Meta',onClick:connectMeta}].map(p=>(
-              <button key={p.key} onClick={p.onClick} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 12px',background:connections[p.key]?'#052e16':'#1e293b',border:`1px solid ${connections[p.key]?'#16a34a':'#334155'}`,borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:600,color:connections[p.key]?'#4ade80':'#94a3b8',transition:'all .2s'}}>
-                <span>{p.icon}</span>{p.label}
-                <span style={{width:6,height:6,borderRadius:'50%',background:connections[p.key]?'#22c55e':'#475569'}}/>
-              </button>
-            ))}
+            <PlatformBtn icon="🔵" label="Google" connected={!!connections.google} onClick={connectGoogle} onDisconnect={disconnectGoogle}/>
+            <PlatformBtn icon="🔷" label="Meta" connected={!!connections.meta} onClick={connectMeta} onDisconnect={disconnectMeta}/>
           </div>
         </div>
       </nav>
@@ -301,14 +336,14 @@ export default function Home() {
           <div style={{maxWidth:720,margin:'0 auto'}}>
             <div style={{display:'inline-flex',alignItems:'center',gap:6,background:'#1e1b4b',border:'1px solid #3730a3',borderRadius:99,padding:'4px 14px',fontSize:11,color:'#a5b4fc',marginBottom:24}}>
               <span style={{width:6,height:6,borderRadius:'50%',background:'#6366f1',display:'inline-block'}}/>
-              Powered by Claude AI · 30+ vérifications · RGPD / GA4 / Meta
+              Powered by Claude AI · GA4 · GTM · Meta · 30+ vérifications
             </div>
             <h1 style={{fontSize:'clamp(32px,6vw,54px)',fontWeight:800,letterSpacing:'-0.04em',lineHeight:1.1,margin:'0 0 20px'}}>
               Auditez votre tracking{' '}
               <span style={{background:'linear-gradient(135deg,#818cf8,#c084fc,#f472b6)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>en 60 secondes</span>
             </h1>
             <p style={{fontSize:15,color:'#64748b',lineHeight:1.7,margin:'0 auto 32px',maxWidth:560}}>
-              RGPD · Consent Mode v2 · GA4 · Google Ads Enhanced Conversions<br/>Meta Advanced Matching · CAPI · Parcours utilisateur · Micro-signaux
+              RGPD · Consent Mode v2 · GA4 · GTM · Google Ads · Meta CAPI · Parcours utilisateur
             </p>
             <div style={{display:'flex',gap:0,background:'#0f172a',border:'1px solid #334155',borderRadius:14,padding:6,maxWidth:680,margin:'0 auto',boxShadow:'0 0 0 1px #1e293b, 0 20px 60px rgba(99,102,241,.15)'}}>
               <input value={url} onChange={e=>setUrl(e.target.value)} onKeyDown={e=>e.key==='Enter'&&runAudit()}
@@ -319,9 +354,8 @@ export default function Home() {
               </button>
             </div>
             <div style={{marginTop:14,fontSize:11,color:'#334155'}}>
-              {!connections.google&&!connections.meta?(
-                <>💡 Connectez <button onClick={connectGoogle} style={{background:'none',border:'none',color:'#818cf8',cursor:'pointer',fontWeight:700,fontSize:11}}>Google</button> et <button onClick={connectMeta} style={{background:'none',border:'none',color:'#a78bfa',cursor:'pointer',fontWeight:700,fontSize:11}}>Meta</button> pour enrichir l'audit avec vos données réelles</>
-              ):<span style={{color:'#4ade80'}}>✓ {connections.google?'Google connecté ':''}{connections.meta?'· Meta connecté':''}</span>}
+              {connections.google||connections.meta?<span style={{color:'#4ade80'}}>✓ {connections.google?'Google (GA4+GTM) ':''}{connections.meta?'· Meta':''} — audit enrichi activé</span>:
+              <>💡 Connectez <button onClick={connectGoogle} style={{background:'none',border:'none',color:'#818cf8',cursor:'pointer',fontWeight:700,fontSize:11}}>Google</button> et <button onClick={connectMeta} style={{background:'none',border:'none',color:'#a78bfa',cursor:'pointer',fontWeight:700,fontSize:11}}>Meta</button> pour enrichir avec les données réelles de vos comptes</>}
             </div>
             {error&&<div style={{marginTop:16,padding:'12px 16px',background:'#7f1d1d',border:'1px solid #ef4444',borderRadius:10,fontSize:12,color:'#fca5a5',maxWidth:680,margin:'16px auto 0',textAlign:'left'}}>⚠ {error}</div>}
           </div>
@@ -337,7 +371,7 @@ export default function Home() {
               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>📡</div>
             </div>
             <div style={{fontSize:20,fontWeight:700,marginBottom:10}}>{phase==='scanning'?'Scan en cours...':'Analyse IA...'}</div>
-            <div style={{fontSize:13,color:'#64748b'}}>{phaseMsg}</div>
+            <div style={{fontSize:13,color:'#64748b',lineHeight:1.7}}>{phaseMsg}</div>
             <div style={{background:'#0f172a',border:'1px solid #1e293b',borderRadius:8,padding:'6px 12px',display:'inline-block',marginTop:16,fontSize:12,color:'#475569'}}>{url}</div>
           </div>
         </div>
@@ -352,7 +386,7 @@ export default function Home() {
                 <div style={{display:'flex',alignItems:'center',gap:16}}>
                   <ScoreRing score={report.score.global} size={80}/>
                   <div>
-                    <div style={{fontSize:10,color:'#475569',marginBottom:4,letterSpacing:'.05em',textTransform:'uppercase'}}>Score global</div>
+                    <div style={{fontSize:10,color:'#475569',marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Score global</div>
                     <div style={{fontSize:13,fontWeight:700,color:'#f1f5f9',maxWidth:320,lineHeight:1.5}}>{report.aiSummary.headline}</div>
                     {report.aiSummary.estimated_data_loss&&<div style={{fontSize:11,color:'#f87171',marginTop:4}}>⚠ {report.aiSummary.estimated_data_loss}</div>}
                   </div>
@@ -379,6 +413,7 @@ export default function Home() {
               </div>
             </div>
           </div>
+
           <div style={{maxWidth:960,margin:'0 auto',padding:'20px 24px'}}>
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:10,marginBottom:20}}>
               {[{label:'Consentement',score:report.score.consent,icon:'🔒'},{label:'Mesure GA4',score:report.score.measurement,icon:'📊'},{label:'Conversions',score:report.score.conversion,icon:'⚡'},{label:'Confidentialité',score:report.score.privacy,icon:'🛡️'}].map((s,i)=>(
@@ -389,6 +424,7 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
             {activeTab==='audit'&&categories.map(cat=>{
               const catChecks=checks.filter(c=>c.category===cat)
               const catFail=catChecks.filter(c=>c.status==='fail').length
@@ -423,20 +459,26 @@ export default function Home() {
                 </div>
               )
             })}
+
             {activeTab==='fixes'&&<FixPlan checks={checks}/>}
+
             {activeTab==='platforms'&&(
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14}}>
-                {[{key:'google',icon:'🔵',label:'Google',sub:'GA4 + Google Ads',color:'#1d4ed8',btnBg:'#1e1b4b',btnColor:'#818cf8',btnBorder:'#3730a3',btn:'Connecter Google Analytics & Ads →',onClick:connectGoogle},{key:'meta',icon:'🔷',label:'Meta',sub:'Pixel + CAPI + Advanced Matching',color:'#7c3aed',btnBg:'#2e1065',btnColor:'#a78bfa',btnBorder:'#7c3aed',btn:'Connecter Meta Ads →',onClick:connectMeta}].map(p=>(
-                  <div key={p.key} style={{background:'#0f172a',border:`1px solid ${connections[p.key]?p.color:'#1e293b'}`,borderRadius:14,padding:20}}>
+                {[{key:'google',icon:'🔵',label:'Google',sub:'GA4 + GTM + Google Ads',connected:!!connections.google,info:connections.google?.propertyName,onClick:connectGoogle,btnLabel:'Connecter Google →',btnBg:'#1e1b4b',btnColor:'#818cf8',btnBorder:'#3730a3'},
+                  {key:'meta',icon:'🔷',label:'Meta',sub:'Pixel + CAPI + Advanced Matching',connected:!!connections.meta,info:connections.meta?.pixelName,onClick:connectMeta,btnLabel:'Connecter Meta →',btnBg:'#2e1065',btnColor:'#a78bfa',btnBorder:'#7c3aed'}
+                ].map(p=>(
+                  <div key={p.key} style={{background:'#0f172a',border:`1px solid ${p.connected?'#1d4ed8':'#1e293b'}`,borderRadius:14,padding:20}}>
                     <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
                       <div style={{fontSize:28}}>{p.icon}</div>
                       <div><div style={{fontSize:14,fontWeight:700}}>{p.label}</div><div style={{fontSize:10,color:'#475569'}}>{p.sub}</div></div>
-                      <div style={{marginLeft:'auto',width:8,height:8,borderRadius:'50%',background:connections[p.key]?'#22c55e':'#334155'}}/>
+                      <div style={{marginLeft:'auto',width:8,height:8,borderRadius:'50%',background:p.connected?'#22c55e':'#334155'}}/>
                     </div>
-                    {connections[p.key]?(
-                      <div style={{fontSize:11,color:'#4ade80',background:'#052e16',border:'1px solid #16a34a',padding:'6px 10px',borderRadius:7}}>✓ Compte connecté — données intégrées dans l'audit</div>
+                    {p.connected?(
+                      <div style={{fontSize:11,color:'#4ade80',background:'#052e16',border:'1px solid #16a34a',padding:'6px 10px',borderRadius:7}}>
+                        ✓ {p.info||'Compte connecté'} — données intégrées dans l'audit
+                      </div>
                     ):(
-                      <button onClick={p.onClick} style={{width:'100%',padding:11,fontSize:12,fontWeight:700,background:p.btnBg,color:p.btnColor,border:`1px solid ${p.btnBorder}`,borderRadius:9,cursor:'pointer'}}>{p.btn}</button>
+                      <button onClick={p.onClick} style={{width:'100%',padding:11,fontSize:12,fontWeight:700,background:p.btnBg,color:p.btnColor,border:`1px solid ${p.btnBorder}`,borderRadius:9,cursor:'pointer'}}>{p.btnLabel}</button>
                     )}
                   </div>
                 ))}
@@ -451,6 +493,7 @@ export default function Home() {
           </div>
         </div>
       )}
+
       {modalCheck&&<CheckModal check={modalCheck} onClose={()=>setModalCheck(null)} onGoFix={()=>{setActiveTab('fixes');setModalCheck(null)}}/>}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}input::placeholder{color:#334155}input:focus{outline:none}button:active{transform:scale(.97)}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#0f172a}::-webkit-scrollbar-thumb{background:#334155;border-radius:99px}`}</style>
     </div>
