@@ -8,15 +8,11 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "15.1.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "next": "15.3.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "@anthropic-ai/sdk": "^0.27.0",
-    "googleapis": "^140.0.0",
-    "puppeteer-core": "^22.13.1",
-    "@sparticuz/chromium": "^123.0.1",
-    "lucide-react": "^0.461.0",
-    "clsx": "^2.1.1"
+    "googleapis": "^140.0.0"
   },
   "devDependencies": {
     "@types/node": "^20",
