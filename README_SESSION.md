@@ -1,6 +1,6 @@
 # README_SESSION — TrackAudit
 
-> Fichier de reprise de contexte — généré automatiquement le 2026-06-05 18:58:34
+> Fichier de reprise de contexte — généré automatiquement le 2026-06-05 19:06:58
 >
 > **Phrase magique de reprise :**
 > `Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit`
@@ -23,19 +23,18 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 | Champ | Valeur |
 |-------|--------|
 | Branche | `main` |
-| Dernier commit | `0409788f` — feat: session management system — /session command, post-commit hook, README_SESSION.md |
+| Dernier commit | `530f901e` — fix: OAuth connections persist across redirects + GTM data wired to analyze |
 | Date | 2026-06-05 |
-| Mis à jour | 2026-06-05 18:58:34 |
+| Mis à jour | 2026-06-05 19:06:58 |
 
 ### Fichiers modifiés dans le dernier commit
 
-- `.claude/commands/session.md`
-- `CLAUDE.md`
 - `README_SESSION.md`
-- `scripts/update_session.py`
+- `src/app/App.tsx`
 
 ### 10 derniers commits
 
+- `530f901 fix: OAuth connections persist across redirects + GTM data wired to analyze`
 - `0409788 feat: session management system — /session command, post-commit hook, README_SESSION.md`
 - `0fc7bd0 feat: src/app/App.tsx`
 - `5cba503 fix: next.config.js`
@@ -45,7 +44,6 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 - `41acbb5 fix: src/app/page.tsx`
 - `bbaf217 fix: src/app/App.tsx`
 - `abb482c fix: src/app/page.tsx`
-- `29b0892 fix: src/app/layout.tsx`
 
 ---
 
