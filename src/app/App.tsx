@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { AuditReport, ScanRawData, PlatformData, CheckResult } from '@/types'
+import type { GTMData } from '@/lib/gtm'
 
 // ─── Status config ────────────────────────────────────────────────────────────
 const ST = {
@@ -289,7 +290,14 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'audit' | 'fixes' | 'platforms'>('audit')
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
   const [modalCheck, setModalCheck] = useState<CheckResult | null>(null)
-  const [connections, setConnections] = useState<{ google?: { accessToken: string; propertyName?: string; measurementId?: string }; meta?: { accessToken: string; pixelName?: string } }>({})
+  const [connections, setConnections] = useState<{ google?: { accessToken: string; propertyName?: string; measurementId?: string }; meta?: { accessToken: string; pixelName?: string } }>(() => {
+    try { return JSON.parse(sessionStorage.getItem('trackaudit_connections') || '{}') } catch { return {} }
+  })
+
+  // Sync connections to sessionStorage so OAuth redirects don't wipe the other platform
+  useEffect(() => {
+    try { sessionStorage.setItem('trackaudit_connections', JSON.stringify(connections)) } catch {}
+  }, [connections])
 
   // Handle OAuth callbacks
   useEffect(() => {
@@ -338,11 +346,15 @@ export default function Home() {
         setPhase('analyzing')
         setPhaseMsg('Analyse IA — 30+ vérifications...')
         let platformData: PlatformData | undefined
+        let gtmData: GTMData | undefined
         if (connections.google?.accessToken) {
           try {
             const r = await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken }) })
             const j = await r.json()
-            if (j.success) platformData = { ...platformData, ga4: j.ga4, googleAds: j.googleAds }
+            if (j.success) {
+              platformData = { ...platformData, ga4: j.ga4, googleAds: j.googleAds }
+              if (j.gtm) gtmData = j.gtm
+            }
           } catch {}
         }
         if (connections.meta?.accessToken) {
@@ -355,7 +367,7 @@ export default function Home() {
         const analyzeRes = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scanData: scanJson.data, platformData }),
+          body: JSON.stringify({ scanData: scanJson.data, platformData, gtmData }),
         })
         const analyzeJson = await analyzeRes.json()
         if (!analyzeJson.success) throw new Error(analyzeJson.error || 'Erreur analyse')
@@ -404,6 +416,7 @@ export default function Home() {
       setPhase('analyzing')
       setPhaseMsg('Connexion aux plateformes et analyse IA en cours...')
       let platformData: PlatformData | undefined
+      let gtmData: GTMData | undefined
 
       if (connections.google?.accessToken) {
         try {
@@ -415,6 +428,7 @@ export default function Home() {
           const gJson = await gRes.json()
           if (gJson.success) {
             platformData = { ...platformData, ga4: gJson.ga4, googleAds: gJson.googleAds }
+            if (gJson.gtm) gtmData = gJson.gtm
           }
         } catch (e) {}
       }
@@ -437,7 +451,7 @@ export default function Home() {
       const analyzeRes = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanData, platformData }),
+        body: JSON.stringify({ scanData, platformData, gtmData }),
       })
       const analyzeJson = await analyzeRes.json()
       if (!analyzeJson.success) throw new Error(analyzeJson.error || 'Erreur d\'analyse')
