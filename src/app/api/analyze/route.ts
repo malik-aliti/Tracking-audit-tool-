@@ -45,7 +45,7 @@ Réponds UNIQUEMENT en JSON (sans backticks):
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514', max_tokens: 700,
+      model: 'claude-sonnet-4-6', max_tokens: 700,
       messages: [{ role: 'user', content: prompt }],
     })
     const text = response.content.find((b: any) => b.type === 'text')?.text || '{}'

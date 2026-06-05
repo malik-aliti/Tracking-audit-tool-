@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { scanUrl } from '@/lib/scanner'
 
 export const maxDuration = 60
 
@@ -11,7 +12,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: normalize(body.browserData) })
     }
 
-    // Mode 2: scan fetch HTML
+    // Mode 2: scan Puppeteer (exécute le JS, capture réseau, cookies, dataLayer réels)
     const { url } = body
     if (!url) return NextResponse.json({ success: false, error: 'URL requise' }, { status: 400 })
 
@@ -19,8 +20,15 @@ export async function POST(req: NextRequest) {
     try { parsed = new URL(url.startsWith('http') ? url : `https://${url}`) }
     catch { return NextResponse.json({ success: false, error: 'URL invalide' }, { status: 400 }) }
 
-    const data = await fetchScan(parsed.href)
-    return NextResponse.json({ success: true, data })
+    try {
+      const data = await scanUrl(parsed.href)
+      return NextResponse.json({ success: true, data })
+    } catch (puppeteerErr: any) {
+      // Fallback sur le scan HTML statique si Puppeteer échoue
+      console.warn('Puppeteer scan failed, falling back to fetch scan:', puppeteerErr.message)
+      const data = await fetchScan(parsed.href)
+      return NextResponse.json({ success: true, data, _scanMode: 'fetch_fallback' })
+    }
   } catch (err: any) {
     console.error('Scan error:', err.message)
     return NextResponse.json({ success: false, error: err.message || 'Erreur scan' }, { status: 500 })
