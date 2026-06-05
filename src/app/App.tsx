@@ -317,6 +317,59 @@ export default function Home() {
     }
   }, [report])
 
+  // Expose __trackaudit pour injection depuis Claude in Chrome
+  // Reçoit les données navigateur et lance l'analyse complète
+  useEffect(() => {
+    const handleBrowserData = async (browserData: any) => {
+      if (!browserData || browserData._source !== 'browser') return
+      setUrl(browserData.url || '')
+      setPhase('scanning')
+      setPhaseMsg('Données navigateur reçues — analyse en cours...')
+      setError('')
+      setReport(null)
+      try {
+        const scanRes = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ browserData }),
+        })
+        const scanJson = await scanRes.json()
+        if (!scanJson.success) throw new Error(scanJson.error || 'Erreur scan')
+        setPhase('analyzing')
+        setPhaseMsg('Analyse IA — 30+ vérifications...')
+        let platformData: PlatformData | undefined
+        if (connections.google?.accessToken) {
+          try {
+            const r = await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken }) })
+            const j = await r.json()
+            if (j.success) platformData = { ...platformData, ga4: j.ga4, googleAds: j.googleAds }
+          } catch {}
+        }
+        if (connections.meta?.accessToken) {
+          try {
+            const r = await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken }) })
+            const j = await r.json()
+            if (j.success) platformData = { ...platformData, meta: j.meta }
+          } catch {}
+        }
+        const analyzeRes = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scanData: scanJson.data, platformData }),
+        })
+        const analyzeJson = await analyzeRes.json()
+        if (!analyzeJson.success) throw new Error(analyzeJson.error || 'Erreur analyse')
+        setReport(analyzeJson.report)
+        setPhase('done')
+      } catch (err: any) {
+        setError(err.message || 'Erreur inconnue')
+        setPhase('error')
+      }
+    }
+    ;(window as any).__trackaudit = handleBrowserData
+    return () => { delete (window as any).__trackaudit }
+  }, [connections])
+
   const connectGoogle = async () => {
     const res = await fetch('/api/google')
     const { authUrl } = await res.json()
