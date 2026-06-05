@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "pdf-to-markdown": {
+      "source": "aliceisjustplaying/claude-resources-monorepo",
+      "sourceType": "github",
+      "skillPath": "skills/pdf-to-markdown/SKILL.md",
+      "computedHash": "1d0cdfc644c786cd3feeb5baa1930bb7b65ffe6bc0ed4f63d854d5894c794155"
+    }
+  }
+}
