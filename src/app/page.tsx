@@ -187,15 +187,17 @@ export default function Home() {
 
   // ── Persist connections in localStorage ──────────────────────────────────
   useEffect(()=>{
+    if (typeof window === 'undefined') return
     try {
-      const saved = localStorage.getItem(STORAGE_KEY)
+      const saved = window.localStorage.getItem(STORAGE_KEY)
       if (saved) setConnections(JSON.parse(saved))
     } catch {}
   },[])
 
   const saveConnections = useCallback((conn: Connections) => {
     setConnections(conn)
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(conn)) } catch {}
+    if (typeof window === 'undefined') return
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(conn)) } catch {}
   },[])
 
   // ── OAuth callbacks ───────────────────────────────────────────────────────
