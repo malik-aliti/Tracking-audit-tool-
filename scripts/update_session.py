@@ -1,291 +1,253 @@
 #!/usr/bin/env python3
 """
-update_session.py — Met à jour README_SESSION.md sur GitHub après chaque commit.
-Appelé par le hook git post-commit et par la commande /session de Claude Code.
+update_session.py — Générateur automatique de contexte de session TrackAudit
+Usage : python3 update_session.py
+Pushe README_SESSION.md dans le repo GitHub avec l'état actuel du projet.
+À appeler en fin de session ou quand la conversation devient trop longue.
 """
 
-import os
-import sys
-import json
-import base64
-import subprocess
-import urllib.request
-import urllib.error
+import subprocess, os, base64, json, urllib.request, urllib.error
 from datetime import datetime
-from pathlib import Path
 
-
-REPO_OWNER = "malik-aliti"
-REPO_NAME = "Tracking-audit-tool-"
-GITHUB_REPO = f"{REPO_OWNER}/{REPO_NAME}"
-SESSION_FILE = "README_SESSION.md"
-TOKEN_PATH = os.path.expanduser("~/.trackaudit_token")
-
-
-def repo_root() -> Path:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise RuntimeError("Pas dans un repo git")
-    return Path(result.stdout.strip())
-
-
-def git(*args, cwd: str = None) -> str:
-    result = subprocess.run(
-        ["git"] + list(args),
-        capture_output=True, text=True, cwd=cwd
-    )
-    return result.stdout.strip()
-
-
-def read_token() -> str:
-    if not os.path.exists(TOKEN_PATH):
-        raise FileNotFoundError(f"Token introuvable : {TOKEN_PATH}")
-    return Path(TOKEN_PATH).read_text().strip()
-
-
-def github_request(method: str, path: str, token: str, data: dict = None):
-    url = f"https://api.github.com{path}"
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-        "User-Agent": "TrackAudit-SessionBot/1.0",
-    }
-    body = json.dumps(data).encode("utf-8") if data else None
-    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+# Token lu depuis variable env ou .env.local
+import re as _re
+_TOKEN_FILE = os.path.expanduser("~/.trackaudit_token")
+TOKEN = os.environ.get("GITHUB_TOKEN", "")
+if not TOKEN and os.path.exists(_TOKEN_FILE):
+    TOKEN = open(_TOKEN_FILE).read().strip()
+if not TOKEN:
+    # Chercher dans .env.local
     try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        body_err = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"GitHub API {e.code}: {body_err}") from e
+        _env = open(".env.local").read()
+        _m = _re.search(r"GITHUB_TOKEN=(.+)", _env)
+        if _m: TOKEN = _m.group(1).strip()
+    except: pass
+if not TOKEN:
+    print("ERREUR: GITHUB_TOKEN non trouve.")
+    print("Ajouter dans ~/.trackaudit_token ou variable env GITHUB_TOKEN")
+    exit(1)
+REPO  = "malik-aliti/Tracking-audit-tool-"
+BRANCH = "main"
+HEADERS = {
+    "Authorization": f"token {TOKEN}",
+    "Accept": "application/vnd.github.v3+json",
+    "Content-Type": "application/json"
+}
 
+def run(cmd):
+    try:
+        return subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
+    except:
+        return ""
 
-def get_file_sha(token: str) -> str | None:
-    data = github_request("GET", f"/repos/{GITHUB_REPO}/contents/{SESSION_FILE}", token)
-    return data.get("sha") if data else None
+def get_sha(path):
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/contents/{path}", headers=HEADERS)
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read()).get("sha")
+    except:
+        return None
 
-
-def push_file(token: str, content: str, sha: str = None):
-    payload = {
-        "message": "chore: update session context [auto]",
-        "content": base64.b64encode(content.encode("utf-8")).decode(),
+def push(path, content):
+    sha = get_sha(path)
+    data = {
+        "message": f"chore: auto-update {path} [{datetime.now().strftime('%Y-%m-%d %H:%M')}]",
+        "content": base64.b64encode(content.encode()).decode(),
+        "branch": BRANCH
     }
     if sha:
-        payload["sha"] = sha
-    github_request("PUT", f"/repos/{GITHUB_REPO}/contents/{SESSION_FILE}", token, payload)
-
-
-def collect_state(root: Path) -> dict:
-    def g(*args):
-        return git(*args, cwd=str(root))
-
-    branch = g("branch", "--show-current")
-    last_commit = g("log", "-1", "--format=%H|%s|%ci|%an")
-
-    # Fichiers du dernier commit (compatible single-commit)
-    num_commits = len(g("log", "--oneline").splitlines())
-    if num_commits >= 2:
-        changed = g("diff", "--name-only", "HEAD~1", "HEAD")
-    else:
-        changed = g("show", "--name-only", "--pretty=format:", "HEAD")
-
-    recent_commits = g("log", "--oneline", "-10")
-
-    # Routes API
-    api_routes = []
-    api_dir = root / "src" / "app" / "api"
-    if api_dir.exists():
-        for f in sorted(api_dir.rglob("route.ts")):
-            api_routes.append(str(f.relative_to(root)))
-
-    # Lib files
-    lib_files = []
-    lib_dir = root / "src" / "lib"
-    if lib_dir.exists():
-        for f in sorted(lib_dir.rglob("*.ts")):
-            lib_files.append(str(f.relative_to(root)))
-
-    # Dependencies
-    pkg_path = root / "package.json"
-    deps = {}
-    if pkg_path.exists():
-        deps = json.loads(pkg_path.read_text()).get("dependencies", {})
-
-    # TODOs (git grep retourne 1 si aucun résultat — on ignore le code retour)
-    todos_result = subprocess.run(
-        ["git", "grep", "-n", r"TODO\|FIXME\|HACK", "--", "*.ts", "*.tsx"],
-        capture_output=True, text=True, cwd=str(root)
+        data["sha"] = sha
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/contents/{path}",
+        data=json.dumps(data).encode(), headers=HEADERS, method="PUT"
     )
-    todos = todos_result.stdout.strip()
+    try:
+        with urllib.request.urlopen(req) as r:
+            result = json.loads(r.read())
+            print(f"✓ {path} pushé")
+            return True
+    except urllib.error.HTTPError as e:
+        print(f"✗ Erreur {e.code}: {e.read().decode()[:200]}")
+        return False
 
-    return {
-        "branch": branch,
-        "last_commit": last_commit,
-        "changed": changed,
-        "recent_commits": recent_commits,
-        "api_routes": api_routes,
-        "lib_files": lib_files,
-        "deps": deps,
-        "todos": todos,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
+def collect_state():
+    """Collecte l'état actuel du projet depuis le filesystem et git"""
+    state = {}
+    
+    # Git info
+    state["last_commit"] = run("git log -1 --format='%h %s %ci'")
+    state["branch"] = run("git rev-parse --abbrev-ref HEAD")
+    state["changed_files"] = run("git diff --name-only HEAD~5 HEAD 2>/dev/null | head -20")
+    
+    # Package.json
+    try:
+        with open("package.json") as f:
+            pkg = json.load(f)
+        state["next_version"] = pkg.get("dependencies", {}).get("next", "?")
+        state["react_version"] = pkg.get("dependencies", {}).get("react", "?")
+    except:
+        state["next_version"] = "?"
+        state["react_version"] = "?"
+    
+    # Fichiers existants
+    state["files"] = run("find src -name '*.ts' -o -name '*.tsx' | sort")
+    
+    # Taille des fichiers clés
+    file_sizes = {}
+    for f in ["src/app/App.tsx", "src/lib/analyzer.ts", "src/lib/gtm.ts", "src/lib/platforms.ts"]:
+        try:
+            lines = len(open(f).readlines())
+            file_sizes[f] = f"{lines} lignes"
+        except:
+            file_sizes[f] = "absent"
+    state["file_sizes"] = file_sizes
+    
+    return state
 
+def generate_readme(state):
+    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    
+    return f"""# TrackAudit — Session Context
+> Mis a jour automatiquement le {now}
+> Copier dans Project Knowledge Claude pour demarrer une nouvelle conversation
 
-def build_readme(s: dict) -> str:
-    parts = s["last_commit"].split("|")
-    commit_hash = parts[0][:8] if parts else "?"
-    commit_msg  = parts[1] if len(parts) > 1 else "?"
-    commit_date = parts[2][:10] if len(parts) > 2 else "?"
+## BRIEF PRODUIT
 
-    def bullet_list(lines):
-        items = [f"- `{l}`" for l in lines if l]
-        return "\n".join(items) if items else "- (aucun)"
+Outil SaaS de diagnostic de tracking utilisable par tout site web.
+Scan automatique URL + connexion plateformes (GTM, GA4, Google Ads, Meta) + analyse IA 30+ checks.
 
-    changed_str  = bullet_list(s["changed"].splitlines())
-    commits_str  = bullet_list(s["recent_commits"].splitlines())
-    routes_str   = bullet_list(s["api_routes"])
-    lib_str      = bullet_list(s["lib_files"])
-    deps_str     = "\n".join(f"- `{k}`: `{v}`" for k, v in s["deps"].items())
+Points d'analyse : RGPD/CMP, Consent Mode v2 Avance/Basique, TCF v2.2, GTM API (tags/triggers/variables),
+GA4, Google Ads Enhanced Conversions, Meta Pixel/CAPI/Advanced Matching, parcours utilisateur, QA JS.
 
-    todo_lines   = [l for l in s["todos"].splitlines() if l][:10]
-    todos_str    = bullet_list(todo_lines) if todo_lines else "- (aucun TODO détecté)"
+## STACK TECHNIQUE
 
-    return f"""# README_SESSION — TrackAudit
+- Next.js {state['next_version']} + React {state['react_version']}
+- CRITIQUE : Ne pas upgrader vers Next.js 15.x (bug SSR --localstorage-file fatal)
+- Architecture : page.tsx wrapper (dynamic ssr:false) -> App.tsx ('use client')
+- IA : Claude Sonnet API claude-sonnet-4-20250514
+- Repo : malik-aliti/Tracking-audit-tool- (public, branche {state['branch']})
+- Dernier commit : {state['last_commit']}
 
-> Fichier de reprise de contexte — généré automatiquement le {s["timestamp"]}
->
-> **Phrase magique de reprise :**
-> `Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit`
+## TAILLE FICHIERS CLES
 
----
+{chr(10).join(f"- {k} : {v}" for k, v in state['file_sizes'].items())}
 
-## Projet
+## CONFIGURATION
 
-**TrackAudit** — Application web de diagnostic de tracking : RGPD, Consent Mode v2, GA4,
-Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
+Variables dans .env.local (ne jamais committer les valeurs) :
+- ANTHROPIC_API_KEY
+- NEXT_PUBLIC_BASE_URL (localhost:3000 en dev, URL Vercel en prod)
+- GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+- META_APP_ID / META_APP_SECRET
+- GOOGLE_ADS_DEVELOPER_TOKEN (vide, non configure)
 
-- **Repo :** `malik-aliti/Tracking-audit-tool-`
-- **Stack :** Next.js 14 · TypeScript · Tailwind CSS · `@anthropic-ai/sdk`
-- **Déploiement :** Vercel
+OAuth Google (projet GCP ga-api-486915) : FONCTIONNEL
+- Scopes : analytics.readonly + adwords + tagmanager.readonly + userinfo
+- APIs : Analytics Data, Analytics Admin, Tag Manager
 
----
+OAuth Meta (App TrackAudit) : FONCTIONNEL
+- Scopes : ads_read, business_management, pages_read_engagement
 
-## État courant
+## FONCTIONNEMENT
 
-| Champ | Valeur |
-|-------|--------|
-| Branche | `{s["branch"]}` |
-| Dernier commit | `{commit_hash}` — {commit_msg} |
-| Date | {commit_date} |
-| Mis à jour | {s["timestamp"]} |
+Mode 1 - Scan fetch (defaut) :
+  URL -> /api/scan -> HTML -> detection statique. Score ~44/100.
 
-### Fichiers modifiés dans le dernier commit
+Mode 2 - Injection navigateur (enrichi) :
+  Claude in Chrome -> window.__trackaudit(browserData). Score ~64/100.
+  Permet de voir : CookieYes, Consent Mode v2, cookies reels, dataLayer, Meta Pixel.
 
-{changed_str}
+Mode 3 - APIs plateformes (OAuth connecte) :
+  GA4 Data API + Tag Manager API + Google Ads API en parallele.
 
-### 10 derniers commits
+## ETAT ACTUEL
 
-{commits_str}
+FONCTIONNEL :
+- App stable localhost:3000
+- Scan fetch sur n'importe quelle URL
+- Interface 30+ checks, plan de correction, onglet plateformes
+- OAuth Google + Meta configures et testes
+- GTM API implementee dans src/lib/gtm.ts
+- Analyse IA avec resume Claude
 
----
+A VALIDER :
+- window.__trackaudit (tester depuis console navigateur)
+- GTM checks (reconnexion Google requise a chaque redemarrage)
 
-## Architecture
+TODO :
+- Deploiement Vercel (PRIORITAIRE)
+- Persistance tokens OAuth avec sessionStorage
+- Export PDF rapport
+- Multi-sites, historique audits, TikTok/LinkedIn Ads
 
-### Routes API (`src/app/api/`)
+## DEMARRER UNE SESSION
 
-{routes_str}
+Terminal :
+  cd ~/Tracking-audit-tool-
+  git pull origin main
+  npm run dev
 
-### Bibliothèques (`src/lib/`)
+Test window.__trackaudit dans console navigateur sur localhost:3000 :
+  window.__trackaudit({{
+    url:'https://weareoxo-digital.com/',
+    gtmContainers:['GTM-MD9XQC9S'], ga4Ids:['G-T2BX8HLRVN'],
+    metaPixelIds:['993896383378275'], cmpDetected:'CookieYes', hasTCF:false,
+    consentDefault:{{analytics_storage:'denied',ad_storage:'denied',
+      ad_user_data:'denied',ad_personalization:'denied',wait_for_update:2000}},
+    consentUpdate:{{analytics_storage:'granted',ad_storage:'granted',
+      ad_user_data:'granted',ad_personalization:'granted'}},
+    cookies:['_ga','cookieyes-consent','_fbp','FPLC'],
+    hasGTM:true,hasGtag:true,hasFbq:true,hasCAPI:false,
+    ctaElements:36,forms:[],jsErrors:[],pageType:'home',_source:'browser'
+  }})
 
-{lib_str}
+Mettre a jour le session context en fin de session :
+  python3 update_session.py
 
-### Dépendances clés
+## PROCHAINES ETAPES (priorite)
 
-{deps_str}
+1. Deploiement Vercel :
+   vercel.com/new -> importer le repo -> configurer variables env ->
+   mettre a jour NEXT_PUBLIC_BASE_URL -> mettre a jour URIs OAuth -> redeployer
 
----
+2. Persistance tokens OAuth :
+   sessionStorage dans useEffect avec typeof window check
 
-## Variables d'environnement requises
+3. Tester injection navigateur :
+   Claude in Chrome sur weareoxo-digital.com -> appeler window.__trackaudit
 
-| Variable | Usage |
-|----------|-------|
-| `ANTHROPIC_API_KEY` | Analyse IA des configurations tracking |
-| `NEXT_PUBLIC_BASE_URL` | URL de base de l'app (Vercel) |
-| `GOOGLE_CLIENT_ID` | OAuth Google pour GA4 / Google Ads |
-| `GOOGLE_CLIENT_SECRET` | OAuth Google |
-| `GOOGLE_ADS_DEVELOPER_TOKEN` | API Google Ads |
-| `META_APP_ID` | API Meta CAPI |
-| `META_APP_SECRET` | API Meta |
+4. Phase 2 - APIs enrichies :
+   Google Ads Developer Token + Meta Ads insights
 
----
+## AUDIT REFERENCE weareoxo-digital.com
 
-## TODOs / Points d'attention
+Fetch : 44/100 | Injection navigateur : 64/100
+Donnees : GTM-MD9XQC9S, G-T2BX8HLRVN, Pixel 993896383378275, CookieYes Mode Avance wait_for_update:2000ms
+Problemes : 36 CTAs sans tracking, Advanced Matching Meta absent, CAPI non connectee, 0 evenements custom
 
-{todos_str}
+## BUGS RESOLUS (ne pas repeter)
 
----
+- localStorage SSR -> downgrade Next.js 14.2.29
+- ssr:false interdit Server Component -> 'use client' dans page.tsx
+- backslash-apostrophes analyzer.ts -> reecriture propre
+- App crash -> rm -rf .next node_modules && npm install
+- Fichiers desynchros -> git reset --hard origin/main
 
-## Comment reprendre dans une nouvelle conversation
+## ROADMAP
 
-Colle cette phrase dans Claude.ai :
-
-> `Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit`
-
----
-
-*Généré par `scripts/update_session.py` — hook git post-commit + commande `/session` Claude Code*
+Phase 1 OK  : Diagnostic tracking complet
+Phase 2     : APIs enrichies GTM + Google Ads + TikTok/LinkedIn
+Phase 3     : Analyse paid (ROAS, CPA, anomalies)
+Phase 4     : Traffic & leads (entonnoirs, cohortes, alertes)
+Phase 5     : SaaS (auth Supabase, freemium, historique, PDF)
 """
 
-
-def main():
-    # --push : écrit localement ET pousse via API GitHub (crée un commit remote)
-    # sans flag : écrit localement seulement (utilisé par le hook post-commit)
-    push = "--push" in sys.argv
-
-    try:
-        root = repo_root()
-        print(f"[session] Repo : {root}")
-
-        state = collect_state(root)
-        print(f"[session] État collecté ✓  (branche : {state['branch']})")
-
-        content = build_readme(state)
-
-        # Écriture locale (toujours)
-        (root / SESSION_FILE).write_text(content, encoding="utf-8")
-        print(f"[session] {SESSION_FILE} écrit localement ✓")
-
-        if push:
-            # Commit + push via git normal (pas d'API — évite la divergence)
-            subprocess.run(["git", "add", SESSION_FILE], cwd=str(root), capture_output=True)
-            has_change = subprocess.run(
-                ["git", "diff", "--cached", "--quiet", SESSION_FILE],
-                cwd=str(root)
-            ).returncode != 0
-            if has_change:
-                env = {**os.environ, "GIT_HOOK_NO_SESSION": "1"}
-                subprocess.run(
-                    ["git", "commit", "-m", "chore: update session [auto]"],
-                    cwd=str(root), env=env, capture_output=True
-                )
-            subprocess.run(["git", "push", "origin", "main"], cwd=str(root))
-            print(f"[session] {SESSION_FILE} poussé sur GitHub ✓")
-            print(f"\n✅ https://github.com/{GITHUB_REPO}/blob/main/{SESSION_FILE}")
-            print("\nPhrase de reprise :")
-            print("  Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit")
-        else:
-            print(f"[session] Mode hook — {SESSION_FILE} mis à jour localement (pas de push)")
-
-    except Exception as e:
-        print(f"[session] ERREUR : {e}", file=sys.stderr)
-        sys.exit(1)
-
-
 if __name__ == "__main__":
-    main()
+    print("Collecte de l'etat du projet...")
+    state = collect_state()
+    print("Generation du README_SESSION.md...")
+    content = generate_readme(state)
+    print("Push vers GitHub...")
+    push("README_SESSION.md", content)
+    print("\nDone. Copier README_SESSION.md dans Project Knowledge Claude pour la prochaine session.")
