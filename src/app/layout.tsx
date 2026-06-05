@@ -3,13 +3,13 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: 'TrackAudit — Diagnostic de tracking',
-  description: 'Audit complet : RGPD, Consent Mode v2, GA4, Google Ads, Meta Pixel.',
+  description: 'Audit complet : RGPD, Consent Mode v2, GA4, GTM, Google Ads, Meta.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr">
-      <body>{children}</body>
+      <body style={{ margin: 0, padding: 0, background: '#020617' }}>{children}</body>
     </html>
   )
 }
