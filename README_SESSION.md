@@ -1,6 +1,6 @@
 # README_SESSION — TrackAudit
 
-> Fichier de reprise de contexte — généré automatiquement le 2026-06-05 19:06:58
+> Fichier de reprise de contexte — généré automatiquement le 2026-06-05 19:12:35
 >
 > **Phrase magique de reprise :**
 > `Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit`
@@ -23,17 +23,20 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 | Champ | Valeur |
 |-------|--------|
 | Branche | `main` |
-| Dernier commit | `530f901e` — fix: OAuth connections persist across redirects + GTM data wired to analyze |
+| Dernier commit | `40725f6d` — fix: wire Puppeteer scanner + fix AI model ID |
 | Date | 2026-06-05 |
-| Mis à jour | 2026-06-05 19:06:58 |
+| Mis à jour | 2026-06-05 19:12:35 |
 
 ### Fichiers modifiés dans le dernier commit
 
-- `README_SESSION.md`
-- `src/app/App.tsx`
+- `package-lock.json`
+- `package.json`
+- `src/app/api/analyze/route.ts`
+- `src/app/api/scan/route.ts`
 
 ### 10 derniers commits
 
+- `40725f6 fix: wire Puppeteer scanner + fix AI model ID`
 - `530f901 fix: OAuth connections persist across redirects + GTM data wired to analyze`
 - `0409788 feat: session management system — /session command, post-commit hook, README_SESSION.md`
 - `0fc7bd0 feat: src/app/App.tsx`
@@ -43,7 +46,6 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 - `dcb815e fix: src/app/App.tsx`
 - `41acbb5 fix: src/app/page.tsx`
 - `bbaf217 fix: src/app/App.tsx`
-- `abb482c fix: src/app/page.tsx`
 
 ---
 
@@ -71,11 +73,13 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 
 ### Dépendances clés
 
+- `@anthropic-ai/sdk`: `^0.27.0`
+- `@sparticuz/chromium`: `^149.0.0`
+- `googleapis`: `^140.0.0`
 - `next`: `14.2.29`
+- `puppeteer-core`: `^25.1.0`
 - `react`: `^18.3.1`
 - `react-dom`: `^18.3.1`
-- `@anthropic-ai/sdk`: `^0.27.0`
-- `googleapis`: `^140.0.0`
 
 ---
 
