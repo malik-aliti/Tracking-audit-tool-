@@ -289,7 +289,11 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'audit' | 'fixes' | 'platforms'>('audit')
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
   const [modalCheck, setModalCheck] = useState<CheckResult | null>(null)
-  const [connections, setConnections] = useState<{ google?: { accessToken: string; propertyName?: string; measurementId?: string }; meta?: { accessToken: string; pixelName?: string } }>({})
+  const [connections, setConnections] = useState<{
+    google?: { accessToken: string; propertyName?: string; measurementId?: string }
+    meta?: { accessToken: string; pixelName?: string }
+    linkedin?: { accessToken: string; accountName?: string; accountId?: string; currency?: string }
+  }>({})
 
   // Handle OAuth callbacks
   useEffect(() => {
@@ -303,6 +307,8 @@ export default function Home() {
           setConnections(prev => ({ ...prev, google: { accessToken: data.accessToken, propertyName: data.ga4PropertyName, measurementId: data.ga4MeasurementId } }))
         } else if (data.platform === 'meta') {
           setConnections(prev => ({ ...prev, meta: { accessToken: data.accessToken, pixelName: data.pixelName } }))
+        } else if (data.platform === 'linkedin') {
+          setConnections(prev => ({ ...prev, linkedin: { accessToken: data.accessToken, accountName: data.accountName, accountId: data.accountId, currency: data.currency } }))
         }
       } catch (e) {}
       window.history.replaceState({}, '', '/')
@@ -378,6 +384,12 @@ export default function Home() {
 
   const connectMeta = async () => {
     const res = await fetch('/api/meta')
+    const { authUrl } = await res.json()
+    window.location.href = authUrl
+  }
+
+  const connectLinkedIn = async () => {
+    const res = await fetch('/api/linkedin')
     const { authUrl } = await res.json()
     window.location.href = authUrl
   }
@@ -465,11 +477,12 @@ export default function Home() {
           <div style={{ width: 36, height: 36, background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>📡</div>
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, color: 'white', letterSpacing: '-0.03em' }}>TrackAudit</div>
-            <div style={{ fontSize: 10, color: '#64748b' }}>Diagnostic de tracking • RGPD • GA4 • Google Ads • Meta</div>
+            <div style={{ fontSize: 10, color: '#64748b' }}>Diagnostic de tracking • RGPD • GA4 • Google Ads • Meta • LinkedIn Ads</div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <PlatformBadge name="Google" icon="🔵" connected={!!connections.google} onConnect={connectGoogle} />
             <PlatformBadge name="Meta" icon="🔷" connected={!!connections.meta} onConnect={connectMeta} />
+            <PlatformBadge name="LinkedIn" icon="💼" connected={!!connections.linkedin} onConnect={connectLinkedIn} />
           </div>
         </div>
       </div>
@@ -502,10 +515,10 @@ export default function Home() {
 
             {/* Platform connection hint */}
             <div style={{ marginTop: 20, fontSize: 11, color: '#475569' }}>
-              {!connections.google && !connections.meta ? (
-                <span>💡 Connectez <button onClick={connectGoogle} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>Google</button> et <button onClick={connectMeta} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>Meta</button> pour un audit enrichi avec données réelles de vos comptes</span>
+              {!connections.google && !connections.meta && !connections.linkedin ? (
+                <span>💡 Connectez <button onClick={connectGoogle} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>Google</button>, <button onClick={connectMeta} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>Meta</button> ou <button onClick={connectLinkedIn} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>LinkedIn</button> pour un audit enrichi avec données réelles</span>
               ) : (
-                <span style={{ color: '#22c55e' }}>✓ {connections.google ? 'Google connecté' : ''} {connections.meta ? '· Meta connecté' : ''} — audit enrichi activé</span>
+                <span style={{ color: '#22c55e' }}>✓ {[connections.google && 'Google', connections.meta && 'Meta', connections.linkedin && 'LinkedIn'].filter(Boolean).join(' · ')} connecté{Object.values(connections).filter(Boolean).length > 1 ? 's' : ''} — audit enrichi activé</span>
               )}
             </div>
 
@@ -700,8 +713,47 @@ export default function Home() {
                   )}
                 </div>
 
+                {/* LinkedIn */}
+                <div style={{ background: 'white', border: '0.5px solid #e2e8f0', borderRadius: 12, padding: '18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <div style={{ fontSize: 24 }}>💼</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>LinkedIn</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>LinkedIn Ads · Campaign Manager</div>
+                    </div>
+                    <div style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: connections.linkedin ? '#22c55e' : '#cbd5e1' }} />
+                  </div>
+                  {connections.linkedin ? (
+                    <div>
+                      {connections.linkedin.accountName && <div style={{ fontSize: 11, color: '#334155', marginBottom: 4 }}>💼 Compte : {connections.linkedin.accountName}</div>}
+                      {connections.linkedin.currency && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>Devise : {connections.linkedin.currency}</div>}
+                      {report?.platformData?.linkedin && (
+                        <>
+                          <div style={{ fontSize: 11, color: '#166534', background: '#f0fdf4', padding: '5px 8px', borderRadius: 6, marginBottom: 4 }}>
+                            ✓ {report.platformData.linkedin.campaigns.length} campagne{report.platformData.linkedin.campaigns.length !== 1 ? 's' : ''}
+                          </div>
+                          {report.platformData.linkedin.totalImpressions !== undefined && (
+                            <div style={{ fontSize: 11, color: '#64748b' }}>
+                              Impressions (30j) : {report.platformData.linkedin.totalImpressions.toLocaleString('fr-FR')}
+                            </div>
+                          )}
+                          {report.platformData.linkedin.totalSpend !== undefined && (
+                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
+                              Dépenses (30j) : {report.platformData.linkedin.totalSpend.toLocaleString('fr-FR')} {report.platformData.linkedin.currency}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <button onClick={connectLinkedIn} style={{ width: '100%', padding: '10px', fontSize: 12, fontWeight: 700, background: '#f0f8ff', color: '#0077b5', border: '1px solid #bfdbfe', borderRadius: 8, cursor: 'pointer' }}>
+                      Connecter LinkedIn →
+                    </button>
+                  )}
+                </div>
+
                 {/* Coming soon */}
-                {['TikTok Ads', 'LinkedIn Ads'].map(name => (
+                {['TikTok Ads'].map(name => (
                   <div key={name} style={{ background: '#fafafa', border: '0.5px dashed #e2e8f0', borderRadius: 12, padding: '18px', opacity: 0.6 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>{name}</div>
                     <div style={{ fontSize: 10, color: '#94a3b8' }}>Prochainement disponible</div>

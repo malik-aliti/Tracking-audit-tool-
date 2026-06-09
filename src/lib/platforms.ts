@@ -1,5 +1,5 @@
 import { google } from 'googleapis'
-import type { GA4Data, GoogleAdsData, MetaData } from '@/types'
+import type { GA4Data, GoogleAdsData, MetaData, LinkedInData } from '@/types'
 
 export function getGoogleOAuthClient() {
   return new google.auth.OAuth2(
@@ -146,6 +146,105 @@ export async function exchangeMetaCode(code: string): Promise<{ access_token: st
     if (!res.ok) return null
     return res.json()
   } catch { return null }
+}
+
+export function getLinkedInAuthUrl(state: string): string {
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: process.env.LINKEDIN_CLIENT_ID || '',
+    redirect_uri: `${process.env.NEXT_PUBLIC_BASE_URL}/api/linkedin/callback`,
+    state,
+    scope: 'r_ads r_ads_reporting r_organization_social openid profile email',
+  })
+  return `https://www.linkedin.com/oauth/v2/authorization?${params}`
+}
+
+export async function exchangeLinkedInCode(code: string): Promise<{ access_token: string } | null> {
+  try {
+    const res = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: `${process.env.NEXT_PUBLIC_BASE_URL}/api/linkedin/callback`,
+        client_id: process.env.LINKEDIN_CLIENT_ID || '',
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET || '',
+      }),
+    })
+    if (!res.ok) return null
+    return res.json()
+  } catch { return null }
+}
+
+export async function fetchLinkedInData(accessToken: string, accountId?: string): Promise<LinkedInData | null> {
+  try {
+    const headers = { Authorization: `Bearer ${accessToken}`, 'LinkedIn-Version': '202401' }
+
+    // Fetch ad accounts
+    const accountsRes = await fetch(
+      'https://api.linkedin.com/v2/adAccountsV2?q=search&search.type.values[0]=BUSINESS&search.status.values[0]=ACTIVE&count=10',
+      { headers }
+    )
+    if (!accountsRes.ok) return null
+    const accountsData = await accountsRes.json()
+    const accounts: any[] = accountsData.elements || []
+    if (!accounts.length) return null
+
+    const account = accountId
+      ? accounts.find(a => String(a.id) === accountId) || accounts[0]
+      : accounts[0]
+    const aid = String(account.id)
+    const accountUrn = `urn:li:sponsoredAccount:${aid}`
+
+    // Fetch campaigns for this account
+    const campaignsRes = await fetch(
+      `https://api.linkedin.com/v2/adCampaignsV2?q=search&search.account.values[0]=${encodeURIComponent(accountUrn)}&count=20`,
+      { headers }
+    )
+    let campaigns: LinkedInData['campaigns'] = []
+    if (campaignsRes.ok) {
+      const campaignsData = await campaignsRes.json()
+      campaigns = (campaignsData.elements || []).map((c: any) => ({
+        id: String(c.id),
+        name: c.name || `Campaign ${c.id}`,
+        status: c.status || 'UNKNOWN',
+        type: c.type || 'UNKNOWN',
+        objectiveType: c.objectiveType || 'UNKNOWN',
+      }))
+    }
+
+    // Fetch analytics for last 30 days
+    const end = new Date()
+    const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000)
+    const analyticsRes = await fetch(
+      `https://api.linkedin.com/v2/adAnalyticsV2?q=analytics&pivot=ACCOUNT&dateRange.start.day=${start.getDate()}&dateRange.start.month=${start.getMonth() + 1}&dateRange.start.year=${start.getFullYear()}&dateRange.end.day=${end.getDate()}&dateRange.end.month=${end.getMonth() + 1}&dateRange.end.year=${end.getFullYear()}&timeGranularity=ALL&accounts[0]=${encodeURIComponent(accountUrn)}&fields=costInLocalCurrency,impressions,clicks,externalWebsiteConversions`,
+      { headers }
+    )
+    let totalSpend: number | undefined
+    let totalImpressions: number | undefined
+    let totalClicks: number | undefined
+    if (analyticsRes.ok) {
+      const analyticsData = await analyticsRes.json()
+      const el = analyticsData.elements?.[0]
+      if (el) {
+        totalSpend = el.costInLocalCurrency ? parseFloat(el.costInLocalCurrency) : undefined
+        totalImpressions = el.impressions
+        totalClicks = el.clicks
+      }
+    }
+
+    return {
+      accountId: aid,
+      accountName: account.name || `Account ${aid}`,
+      currency: account.currency || 'EUR',
+      status: account.status || 'ACTIVE',
+      campaigns,
+      totalSpend,
+      totalImpressions,
+      totalClicks,
+    }
+  } catch (err) { console.error('LinkedIn error:', err); return null }
 }
 
 export async function fetchMetaData(accessToken: string, pixelId?: string): Promise<MetaData | null> {

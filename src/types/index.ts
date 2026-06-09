@@ -83,10 +83,10 @@ export interface AISummary {
   quick_wins: string[]; strengths: string[]; estimated_data_loss: string
 }
 
-export type PlatformId = 'google_analytics' | 'google_ads' | 'meta'
+export type PlatformId = 'google_analytics' | 'google_ads' | 'meta' | 'linkedin'
 export interface ConnectedPlatform { id: PlatformId; name: string; connected: boolean; accessToken?: string; accountId?: string; accountName?: string }
 
-export interface PlatformData { ga4?: GA4Data; googleAds?: GoogleAdsData; meta?: MetaData }
+export interface PlatformData { ga4?: GA4Data; googleAds?: GoogleAdsData; meta?: MetaData; linkedin?: LinkedInData }
 
 export interface GA4Data {
   propertyId: string; propertyName: string; measurementId: string
@@ -116,3 +116,15 @@ export interface MetaData {
   matchRate?: number; eventStats: MetaEventStat[]; recentEvents: string[]; qualityScore?: number
 }
 export interface MetaEventStat { name: string; count: number; matchRate?: number }
+
+export interface LinkedInData {
+  accountId: string; accountName: string
+  currency: string; status: string
+  campaigns: LinkedInCampaign[]
+  totalSpend?: number; totalImpressions?: number; totalClicks?: number
+}
+export interface LinkedInCampaign {
+  id: string; name: string; status: string
+  type: string; objectiveType: string
+  spend?: number; impressions?: number; clicks?: number; conversions?: number
+}
