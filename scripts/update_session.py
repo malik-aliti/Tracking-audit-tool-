@@ -262,17 +262,23 @@ def main():
         print(f"[session] {SESSION_FILE} écrit localement ✓")
 
         if push:
-            token = read_token()
-            print("[session] Token lu ✓")
-            sha = get_file_sha(token)
-            push_file(token, content, sha)
+            # Commit + push via git normal (pas d'API — évite la divergence)
+            subprocess.run(["git", "add", SESSION_FILE], cwd=str(root), capture_output=True)
+            has_change = subprocess.run(
+                ["git", "diff", "--cached", "--quiet", SESSION_FILE],
+                cwd=str(root)
+            ).returncode != 0
+            if has_change:
+                env = {**os.environ, "GIT_HOOK_NO_SESSION": "1"}
+                subprocess.run(
+                    ["git", "commit", "-m", "chore: update session [auto]"],
+                    cwd=str(root), env=env, capture_output=True
+                )
+            subprocess.run(["git", "push", "origin", "main"], cwd=str(root))
             print(f"[session] {SESSION_FILE} poussé sur GitHub ✓")
             print(f"\n✅ https://github.com/{GITHUB_REPO}/blob/main/{SESSION_FILE}")
             print("\nPhrase de reprise :")
             print("  Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit")
-            # Sync local avec le commit créé par l'API GitHub
-            subprocess.run(["git", "fetch", "origin"], cwd=str(root), capture_output=True)
-            subprocess.run(["git", "merge", "--ff-only", "origin/main"], cwd=str(root), capture_output=True)
         else:
             print(f"[session] Mode hook — {SESSION_FILE} mis à jour localement (pas de push)")
 

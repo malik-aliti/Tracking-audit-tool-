@@ -1,6 +1,6 @@
 # README_SESSION — TrackAudit
 
-> Fichier de reprise de contexte — généré automatiquement le 2026-06-09 17:34:01
+> Fichier de reprise de contexte — généré automatiquement le 2026-06-09 17:48:40
 >
 > **Phrase magique de reprise :**
 > `Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit`
@@ -23,19 +23,19 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 | Champ | Valeur |
 |-------|--------|
 | Branche | `main` |
-| Dernier commit | `40725f6d` — fix: wire Puppeteer scanner + fix AI model ID |
-| Date | 2026-06-05 |
-| Mis à jour | 2026-06-09 17:34:01 |
+| Dernier commit | `f1c29960` — fix: session hook writes locally only, --push flag for explicit GitHub sync |
+| Date | 2026-06-09 |
+| Mis à jour | 2026-06-09 17:48:40 |
 
 ### Fichiers modifiés dans le dernier commit
 
-- `package-lock.json`
-- `package.json`
-- `src/app/api/analyze/route.ts`
-- `src/app/api/scan/route.ts`
+- `.claude/commands/session.md`
+- `scripts/update_session.py`
 
 ### 10 derniers commits
 
+- `f1c2996 fix: session hook writes locally only, --push flag for explicit GitHub sync`
+- `d3a31f3 chore: update session context`
 - `40725f6 fix: wire Puppeteer scanner + fix AI model ID`
 - `530f901 fix: OAuth connections persist across redirects + GTM data wired to analyze`
 - `0409788 feat: session management system — /session command, post-commit hook, README_SESSION.md`
@@ -44,8 +44,6 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 - `8f67a5f fix: src/app/page.tsx`
 - `01aa371 fix: package.json`
 - `dcb815e fix: src/app/App.tsx`
-- `41acbb5 fix: src/app/page.tsx`
-- `bbaf217 fix: src/app/App.tsx`
 
 ---
 
