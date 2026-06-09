@@ -244,29 +244,37 @@ Colle cette phrase dans Claude.ai :
 
 
 def main():
+    # --push : écrit localement ET pousse via API GitHub (crée un commit remote)
+    # sans flag : écrit localement seulement (utilisé par le hook post-commit)
+    push = "--push" in sys.argv
+
     try:
         root = repo_root()
         print(f"[session] Repo : {root}")
-
-        token = read_token()
-        print("[session] Token lu ✓")
 
         state = collect_state(root)
         print(f"[session] État collecté ✓  (branche : {state['branch']})")
 
         content = build_readme(state)
 
-        # Écriture locale
+        # Écriture locale (toujours)
         (root / SESSION_FILE).write_text(content, encoding="utf-8")
         print(f"[session] {SESSION_FILE} écrit localement ✓")
 
-        # Push GitHub
-        sha = get_file_sha(token)
-        push_file(token, content, sha)
-        print(f"[session] {SESSION_FILE} poussé sur GitHub ✓")
-        print(f"\n✅ https://github.com/{GITHUB_REPO}/blob/main/{SESSION_FILE}")
-        print("\nPhrase de reprise :")
-        print("  Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit")
+        if push:
+            token = read_token()
+            print("[session] Token lu ✓")
+            sha = get_file_sha(token)
+            push_file(token, content, sha)
+            print(f"[session] {SESSION_FILE} poussé sur GitHub ✓")
+            print(f"\n✅ https://github.com/{GITHUB_REPO}/blob/main/{SESSION_FILE}")
+            print("\nPhrase de reprise :")
+            print("  Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit")
+            # Sync local avec le commit créé par l'API GitHub
+            subprocess.run(["git", "fetch", "origin"], cwd=str(root), capture_output=True)
+            subprocess.run(["git", "merge", "--ff-only", "origin/main"], cwd=str(root), capture_output=True)
+        else:
+            print(f"[session] Mode hook — {SESSION_FILE} mis à jour localement (pas de push)")
 
     except Exception as e:
         print(f"[session] ERREUR : {e}", file=sys.stderr)

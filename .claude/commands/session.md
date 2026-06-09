@@ -6,7 +6,7 @@ Exécute ces étapes dans l'ordre pour sauvegarder la session TrackAudit :
 
 1. Lance la commande Bash suivante et attends la fin complète :
    ```
-   python3 scripts/update_session.py
+   python3 scripts/update_session.py --push
    ```
 
 2. Vérifie que la sortie contient "poussé sur GitHub ✓". Si le script échoue, diagnostique et corrige l'erreur avant de relancer.
