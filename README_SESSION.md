@@ -1,6 +1,6 @@
 # README_SESSION — TrackAudit
 
-> Fichier de reprise de contexte — généré automatiquement le 2026-06-05 19:12:35
+> Fichier de reprise de contexte — généré automatiquement le 2026-06-09 17:34:01
 >
 > **Phrase magique de reprise :**
 > `Lis README_SESSION.md dans malik-aliti/Tracking-audit-tool- et reprends le contexte TrackAudit`
@@ -25,7 +25,7 @@ Google Ads Enhanced Conversions, Meta Advanced Matching, CAPI.
 | Branche | `main` |
 | Dernier commit | `40725f6d` — fix: wire Puppeteer scanner + fix AI model ID |
 | Date | 2026-06-05 |
-| Mis à jour | 2026-06-05 19:12:35 |
+| Mis à jour | 2026-06-09 17:34:01 |
 
 ### Fichiers modifiés dans le dernier commit
 
