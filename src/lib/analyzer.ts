@@ -475,26 +475,31 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
           ['Meta Events Manager : pixel > Correspondance avancée > Activer'], 'high'))
   }
 
-  // m2 — CAPI (source primaire = API Meta si connectée)
+  // m2 — CAPI : sources par ordre de priorité : sGTM > API Meta > manuel
   if (raw.metaPixelIds.length > 0 || (hasGTM && gtmData!.checks.hasMetaPixelTag)) {
-    if (platform?.meta) {
-      // Meta API connectée : source authoritative
+    const capiInSgtm = hasGTM && gtmData!.serverContainerAnalysis.some(sc => sc.hasMetaCapiTag)
+    if (capiInSgtm) {
+      const sc = gtmData!.serverContainerAnalysis.find(s => s.hasMetaCapiTag)!
+      results.push(ok('m2', 'CAPI configurée dans le container sGTM', 'meta', ['Meta', 'CAPI'],
+        `Tag Conversions API détecté dans le container server-side "${sc.name}".`,
+        [`Container sGTM : ${sc.name} (${sc.publicId})`, `Tags sGTM : ${sc.tagCount} | Clients : ${sc.clientCount}`],
+        ['Vérifier que les événements CAPI sont bien reçus dans Meta Events Manager',
+         'Configurer event_id dans le tag Pixel web pour la déduplication']))
+    } else if (platform?.meta) {
       results.push(platform.meta.capiConnected
-        ? ok('m2', 'CAPI connectée (vérifié via API Meta)', 'meta', ['Meta', 'CAPI'],
-            'Conversions API active — server access token configuré.',
+        ? ok('m2', 'CAPI connectée (API Meta)', 'meta', ['Meta', 'CAPI'],
+            'Server access token configuré sur le pixel Meta.',
             [`Pixel : ${platform.meta.pixelName}`], [])
-        : fail('m2', 'CAPI non configurée (vérifié via API Meta)', 'meta', ['Meta', 'CAPI'],
-            `Pixel ${platform.meta.pixelId} : aucun server access token. 20-40% de conversions perdues (iOS/AdBlockers).`,
+        : fail('m2', 'CAPI non configurée (API Meta)', 'meta', ['Meta', 'CAPI'],
+            `Pixel ${platform.meta.pixelId} : aucun server access token. 20-40% de conversions perdues.`,
             ['Aucun server access token sur le pixel Meta'],
-            ['Meta Events Manager : pixel > Paramètres > Conversions API > Configurer',
-             'Ou : Utiliser un partenaire d\'intégration (Shopify, WooCommerce...)'], 'high'))
+            ['Meta Events Manager : pixel > Paramètres > Conversions API > Configurer'], 'high'))
     } else {
-      // Meta non connectée — vérification manuelle nécessaire (CAPI est server-side, invisible du navigateur)
-      results.push(manual('m2', 'CAPI — connecter Meta pour vérifier', 'meta', ['Meta', 'CAPI'],
-        'La CAPI est server-to-server : impossible à détecter depuis le navigateur. Connecter Meta pour audit automatique.',
-        ['La CAPI envoie des hits depuis votre serveur, pas depuis le navigateur du visiteur'],
-        ['Connecter Meta (bouton Plateformes) pour vérifier automatiquement',
-         'Ou vérifier manuellement : Meta Events Manager > pixel > Paramètres > Conversions API']))
+      results.push(manual('m2', 'CAPI — non vérifiable sans connexion Meta ou sGTM', 'meta', ['Meta', 'CAPI'],
+        'La CAPI est server-to-server. Connecter Google (sGTM) ou Meta pour vérifier automatiquement.',
+        ['CAPI non détectée dans le sGTM, API Meta non connectée'],
+        ['Connecter Google pour scanner le container sGTM',
+         'Ou connecter Meta pour vérifier le server access token']))
     }
   }
 
@@ -544,24 +549,36 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
   }
 
   // ss2 — Déduplication CAPI / Pixel (event_id)
-  if (platform?.meta?.capiConnected || (hasGTM && gtmData!.checks.hasMetaPixelTag)) {
-    const metaHits = raw.networkRequests.filter(r => r.type === 'meta')
-    const hasEventId = metaHits.some(r => r.params?.event_id || r.params?.eid)
-    if (platform?.meta?.capiConnected) {
+  // Source: sGTM analysis (Meta CAPI tag) OR Meta API capiConnected
+  {
+    const scAnalysis = hasGTM ? gtmData!.serverContainerAnalysis : []
+    const capiInSgtm = scAnalysis.some(sc => sc.hasMetaCapiTag)
+    const capiViaApi = !!platform?.meta?.capiConnected
+    const capiActive = capiViaApi || capiInSgtm
+    const hasPixelTag = hasGTM ? gtmData!.checks.hasMetaPixelTag : raw.metaPixelIds.length > 0
+
+    if (capiActive && hasPixelTag) {
+      const metaHits = raw.networkRequests.filter(r => r.type === 'meta')
+      const hasEventId = metaHits.some(r => r.params?.event_id || r.params?.eid)
+      const source = capiInSgtm
+        ? `Tag Meta CAPI détecté dans le container sGTM`
+        : `CAPI configurée (API Meta)`
       results.push(hasEventId
-        ? ok('ss2', 'Déduplication CAPI configurée (event_id détecté)', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
-            'Paramètre event_id présent dans les hits Pixel — déduplication browser/serveur active.',
-            ['event_id transmis dans les requêtes facebook.com/tr'],
+        ? ok('ss2', 'Déduplication CAPI active (event_id détecté)', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
+            `${source}. event_id présent dans les hits Pixel navigateur — déduplication browser/serveur active.`,
+            ['event_id transmis dans les requêtes facebook.com/tr', source],
             ['Vérifier que le même event_id est envoyé côté serveur pour chaque événement'])
-        : fail('ss2', 'Déduplication CAPI manquante (event_id absent)', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
-            'CAPI configurée mais event_id absent dans les hits Pixel — risque de double comptage.',
-            ['Sans event_id identique browser+serveur, Meta comptera 2x les événements'],
-            ['Ajouter event_id dans le tag Pixel GTM (paramètre "Event ID")',
-             'Utiliser la même valeur dans l\'appel CAPI côté serveur'], 'high'))
-    } else {
-      results.push(manual('ss2', 'Déduplication CAPI — CAPI non connectée', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
-        'Connecter Meta et configurer la CAPI pour activer la déduplication.',
-        [], ['Configurer la CAPI puis ajouter event_id au tag Pixel GTM']))
+        : fail('ss2', 'Déduplication CAPI — event_id manquant dans le Pixel navigateur', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
+            `${source} mais event_id absent dans les hits Pixel navigateur — risque de double comptage.`,
+            ['Sans event_id identique browser+serveur, Meta comptera les événements 2 fois', source],
+            ['Ajouter le paramètre "Event ID" dans le tag Meta Pixel du container web GTM',
+             'Utiliser la même valeur unique dans le tag CAPI du container sGTM'], 'high'))
+    } else if (hasPixelTag) {
+      results.push(manual('ss2', 'Déduplication CAPI — CAPI non détectée', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
+        'Pixel Meta configuré mais aucun tag CAPI détecté dans le sGTM ni via l\'API Meta.',
+        ['Sans CAPI, 20-40% des conversions sont perdues (iOS, AdBlockers)'],
+        ['Configurer la CAPI dans le container sGTM (tag "Conversions API")',
+         'Ou connecter Meta dans Plateformes pour vérifier automatiquement']))
     }
   }
 

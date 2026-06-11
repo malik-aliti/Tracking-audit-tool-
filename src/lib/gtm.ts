@@ -201,28 +201,33 @@ async function fetchServerContainerWorkspace(
 function analyzeServerContainer(c: GTMContainer, data: ServerWorkspaceData): ServerContainerAnalysis {
   const { tags, clients } = data
 
-  // GA4 Client: in sGTM it's a CLIENT not a tag
-  // Type is typically 'gaawc' or contains 'ga4'/'google_analytics'
+  // GA4 Client or GA4 forwarding tag in sGTM
   const ga4ClientItem = clients.find(cl =>
-    cl.type === 'gaawc' || cl.type === 'google_analytics_ga4' ||
+    cl.type === 'gaawc' || cl.type === 'gaawe' ||
     cl.name.toLowerCase().includes('ga4') ||
     cl.name.toLowerCase().includes('google analytics') ||
     cl.name.toLowerCase().includes('universal analytics')
   ) || tags.find(t =>
-    t.type === 'gaawc' ||
-    t.name.toLowerCase().includes('ga4 client') ||
-    (t.name.toLowerCase().includes('ga4') && t.name.toLowerCase().includes('client'))
+    t.type === 'gaawc' || t.type === 'gaawe' ||
+    t.name.toLowerCase().includes('ga4') ||
+    t.name.toLowerCase().includes('google analytics') ||
+    t.name.toLowerCase().includes('forward to google')
   )
   const hasGA4Client = !!ga4ClientItem
 
-  // Meta CAPI: can be tag or client
+  // Meta CAPI: match FB_, fbq, conversions_api, capi, facebook, meta
+  const isMetaCapi = (name: string, type: string): boolean => {
+    const n = name.toLowerCase()
+    const tp = type.toLowerCase()
+    return n.includes('fb_') || n.includes('fbq') ||
+      n.includes('conversions_api') || n.includes('conversions api') ||
+      n.includes('capi') || n.includes('facebook') || n.includes('meta pixel') ||
+      n.includes('meta capi') || n.includes('meta conversions') ||
+      tp.includes('facebook') || tp.includes('meta') || tp.includes('fb') ||
+      tp.includes('conversions_api')
+  }
   const hasMetaCapiTag = [...tags, ...clients].some(item =>
-    item.name.toLowerCase().includes('meta') ||
-    item.name.toLowerCase().includes('capi') ||
-    item.name.toLowerCase().includes('facebook') ||
-    item.name.toLowerCase().includes('conversions api') ||
-    (item as any).type?.toLowerCase().includes('meta') ||
-    (item as any).type?.toLowerCase().includes('facebook')
+    isMetaCapi(item.name, (item as any).type || '')
   )
 
   const hasGoogleAdsTag = tags.some(t =>
