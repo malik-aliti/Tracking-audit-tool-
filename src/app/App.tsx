@@ -40,7 +40,7 @@ const C = {
 const STATUS = {
   ok:     { color: C.green,  light: C.greenLight,  border: '#86EFAC', icon: 'check',  label: 'Conforme'  },
   warn:   { color: C.yellow, light: C.yellowLight, border: '#FCD34D', icon: 'warn',   label: 'Attention' },
-  fail:   { color: C.red,    light: C.redLight,    border: '#FCA5A5', icon: 'error',  label: 'Échec'     },
+  fail:   { color: C.red,    light: C.redLight,    border: '#FCA5A5', icon: 'x',      label: 'Échec'     },
   manual: { color: C.purple, light: C.purpleLight, border: '#C4B5FD', icon: 'info',   label: 'Manuel'    },
   na:     { color: C.gray400,light: C.gray100,     border: C.gray300, icon: 'dash',   label: 'N/A'       },
 }
