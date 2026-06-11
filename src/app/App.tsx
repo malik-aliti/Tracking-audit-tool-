@@ -482,7 +482,8 @@ export default function Home() {
         if (!s.success) throw new Error(s.error)
         setPhase('analyzing')
         let pd: PlatformData | undefined, gtm: GTMData | undefined
-        if (connections.google?.accessToken) try { const r = await (await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken }) })).json(); if (r.success) { pd = { ...pd, ga4: r.ga4, googleAds: r.googleAds }; if (r.gtm) gtm = r.gtm } } catch {}
+        const scannedGtmIds = (s.data?.gtmContainers || []).filter((id: string) => id.startsWith('GTM-'))
+        if (connections.google?.accessToken) try { const r = await (await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken, scannedContainerIds: scannedGtmIds }) })).json(); if (r.success) { pd = { ...pd, ga4: r.ga4, googleAds: r.googleAds }; if (r.gtm) gtm = r.gtm } } catch {}
         if (connections.meta?.accessToken) try { const r = await (await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken }) })).json(); if (r.success) pd = { ...pd, meta: r.meta } } catch {}
         const a = await (await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scanData: s.data, platformData: pd, gtmData: gtm }) })).json()
         if (!a.success) throw new Error(a.error)
@@ -504,7 +505,8 @@ export default function Home() {
       if (!s.success) throw new Error(s.error)
       setPhase('analyzing'); setPhaseMsg('Analyse IA...')
       let pd: PlatformData | undefined, gtm: GTMData | undefined
-      if (connections.google?.accessToken) try { const r = await (await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken }) })).json(); if (r.success) { pd = { ...pd, ga4: r.ga4, googleAds: r.googleAds }; if (r.gtm) gtm = r.gtm } } catch {}
+      const scannedGtmIds = (s.data?.gtmContainers || []).filter((id: string) => id.startsWith('GTM-'))
+      if (connections.google?.accessToken) try { const r = await (await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken, scannedContainerIds: scannedGtmIds }) })).json(); if (r.success) { pd = { ...pd, ga4: r.ga4, googleAds: r.googleAds }; if (r.gtm) gtm = r.gtm } } catch {}
       if (connections.meta?.accessToken) try { const r = await (await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken }) })).json(); if (r.success) pd = { ...pd, meta: r.meta } } catch {}
       const a = await (await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scanData: s.data, platformData: pd, gtmData: gtm }) })).json()
       if (!a.success) throw new Error(a.error)

@@ -4,13 +4,13 @@ import { fetchGTMData } from '@/lib/gtm'
 
 export async function POST(req: NextRequest) {
   try {
-    const { accessToken, propertyId, customerId, containerId } = await req.json()
+    const { accessToken, propertyId, customerId, containerId, scannedContainerIds } = await req.json()
     if (!accessToken) return NextResponse.json({ success: false, error: 'Token requis' }, { status: 401 })
 
     const [ga4, googleAds, gtm] = await Promise.allSettled([
       fetchGA4Data(accessToken, propertyId),
       fetchGoogleAdsData(accessToken, customerId),
-      fetchGTMData(accessToken, containerId),
+      fetchGTMData(accessToken, containerId, scannedContainerIds),
     ])
 
     return NextResponse.json({

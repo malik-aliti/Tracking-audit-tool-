@@ -220,7 +220,7 @@ function analyzeServerContainer(c: GTMContainer, tags: GTMTag[]): ServerContaine
 }
 
 // ─── Main fetch function ──────────────────────────────────────────────────────
-export async function fetchGTMData(accessToken: string, targetContainerId?: string): Promise<GTMData | null> {
+export async function fetchGTMData(accessToken: string, targetContainerId?: string, scannedContainerIds: string[] = []): Promise<GTMData | null> {
   try {
     const auth = getOAuthClient(accessToken)
     const tagmanager = google.tagmanager({ version: 'v2', auth })
@@ -250,11 +250,34 @@ export async function fetchGTMData(accessToken: string, targetContainerId?: stri
       return { accountId, accountName: account.name || '', containers, tags: [], triggers: [], variables: [], serverContainerAnalysis: [], checks: buildEmptyChecks() }
     }
 
-    // 3. Separate web vs server containers
-    const serverContainers = containers.filter(isServerContainer)
-    const webContainers = containers.filter(c => !isServerContainer(c))
+    // 3. Classify containers
+    // Strategy: scanned IDs = confirmed web containers. Everything else = server candidate.
+    // Also apply usageContext + name heuristics as fallback.
+    const classifyContainer = (c: GTMContainer): 'web' | 'server' | 'other' => {
+      // If browser scan found this container ID, it's definitely a web container
+      if (scannedContainerIds.length > 0 && scannedContainerIds.includes(c.publicId)) return 'web'
 
-    // 4. Analyze server containers (fetch their tags)
+      const ctx = c.usageContext.map(u => u.toLowerCase())
+      if (ctx.includes('web') || ctx.includes('amp')) return 'web'
+      if (ctx.includes('androidsdk5') || ctx.includes('iossdk5')) return 'other'
+      if (ctx.some(u => u.includes('server'))) return 'server'
+
+      // Name-based heuristics
+      const name = c.name.toLowerCase()
+      if (['sgtm', 'server', 'server-side', 'serveur', 'server side', 'côté serveur', 'serverside']
+        .some(k => name.includes(k))) return 'server'
+
+      // If scanned IDs are known and this container is NOT among them → likely server
+      if (scannedContainerIds.length > 0 && !scannedContainerIds.includes(c.publicId)) return 'server'
+
+      // No scanned IDs available — treat empty/unknown usageContext as web
+      return 'web'
+    }
+
+    const serverContainers = containers.filter(c => classifyContainer(c) === 'server')
+    const webContainers = containers.filter(c => classifyContainer(c) === 'web')
+
+    // 4. Analyze ALL server containers (fetch their tags)
     const serverContainerAnalysis: ServerContainerAnalysis[] = await Promise.all(
       serverContainers.map(async sc => {
         const tags = await fetchContainerWorkspaceTags(tagmanager, accountId, sc.containerId)
@@ -264,7 +287,8 @@ export async function fetchGTMData(accessToken: string, targetContainerId?: stri
 
     // 5. Select web container to analyze
     const container = targetContainerId
-      ? containers.find(c => c.containerId === targetContainerId || c.publicId === targetContainerId) || webContainers[0]
+      ? containers.find(c => c.containerId === targetContainerId || c.publicId === targetContainerId)
+        || webContainers[0]
       : webContainers[0] || containers[0]
 
     if (!container) {
