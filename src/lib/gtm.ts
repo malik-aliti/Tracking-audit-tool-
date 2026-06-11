@@ -225,19 +225,42 @@ export async function fetchGTMData(accessToken: string, targetContainerId?: stri
     const auth = getOAuthClient(accessToken)
     const tagmanager = google.tagmanager({ version: 'v2', auth })
 
-    // 1. List accounts
+    // 1. List ALL accounts
     const accountsRes = await tagmanager.accounts.list()
     const accounts = accountsRes.data.account || []
     if (accounts.length === 0) return null
 
-    const account = accounts[0]
+    console.log('[GTM] accounts found:', accounts.map(a => ({ id: a.accountId, name: a.name })))
+
+    // 2. List ALL containers across ALL accounts
+    const allContainersRaw = await Promise.all(
+      accounts.map(async (acct) => {
+        try {
+          const res = await tagmanager.accounts.containers.list({ parent: `accounts/${acct.accountId}` })
+          return (res.data.container || [])
+        } catch { return [] }
+      })
+    )
+
+    // Find which account owns the scanned web container (or use first account with containers)
+    let account = accounts[0]
+    let accountContainersRaw = allContainersRaw[0] || []
+
+    if (scannedContainerIds.length > 0) {
+      for (let i = 0; i < accounts.length; i++) {
+        const found = allContainersRaw[i].some(c => scannedContainerIds.includes(c.publicId || ''))
+        if (found) { account = accounts[i]; accountContainersRaw = allContainersRaw[i]; break }
+      }
+    } else {
+      // Use account with most containers
+      const maxIdx = allContainersRaw.reduce((max, arr, i) => arr.length > allContainersRaw[max].length ? i : max, 0)
+      account = accounts[maxIdx]
+      accountContainersRaw = allContainersRaw[maxIdx]
+    }
+
     const accountId = account.accountId!
 
-    // 2. List ALL containers
-    const containersRes = await tagmanager.accounts.containers.list({
-      parent: `accounts/${accountId}`,
-    })
-    const containers: GTMContainer[] = (containersRes.data.container || []).map(c => ({
+    const containers: GTMContainer[] = accountContainersRaw.map(c => ({
       accountId: c.accountId || '',
       containerId: c.containerId || '',
       name: c.name || '',
@@ -245,6 +268,8 @@ export async function fetchGTMData(accessToken: string, targetContainerId?: stri
       usageContext: c.usageContext || [],
       domainName: c.domainName || [],
     }))
+
+    console.log('[GTM] containers in account', accountId, ':', containers.map(c => ({ publicId: c.publicId, name: c.name, usageContext: c.usageContext })))
 
     if (containers.length === 0) {
       return { accountId, accountName: account.name || '', containers, tags: [], triggers: [], variables: [], serverContainerAnalysis: [], checks: buildEmptyChecks() }
