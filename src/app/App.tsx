@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import type { AuditReport, ScanRawData, PlatformData, CheckResult } from '@/types'
 import type { GTMData } from '@/lib/gtm'
 
@@ -33,7 +33,7 @@ const ST = {
   na:     { bg: C.bg,       border: C.border,  text: C.sub,    dot: C.muted,  icon: 'na',     label: 'N/A'       },
 }
 
-const CAT_META: Record<string, { label: string; icon: JSX.Element }> = {
+const CAT_META: Record<string, { label: string; icon: React.ReactElement }> = {
   consent:      { label: 'Consentement & RGPD',    icon: <ShieldIcon /> },
   tag_base:     { label: 'Taggage de base',         icon: <TagIcon /> },
   ga4:          { label: 'GA4 & Analytics',         icon: <ChartIcon /> },
