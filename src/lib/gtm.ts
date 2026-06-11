@@ -303,30 +303,64 @@ function buildChecks(
   )
 
   // ── Consent Mode template ─────────────────────────────────────────────────
-  const consentTags = tags.filter(t =>
-    t.type === 'html' &&
-    (t.name.toLowerCase().includes('consent') ||
-     t.name.toLowerCase().includes('cookieyes') ||
-     t.name.toLowerCase().includes('onetrust') ||
-     t.name.toLowerCase().includes('didomi') ||
-     t.name.toLowerCase().includes('axeptio') ||
-     t.name.toLowerCase().includes('cookiebot'))
-  )
-  // Also check for community template types
-  const consentTemplateTag = tags.find(t =>
-    t.type?.toLowerCase().includes('consent') ||
-    t.type?.toLowerCase().includes('cmp') ||
-    consentTags.some(ct => ct.tagId === t.tagId)
-  ) || consentTags[0]
+  // Les templates de la galerie GTM ont un type 'cvt_XXXX', pas 'html'
+  // On cherche sur le nom ET le type ET les paramètres
+  const CMP_KEYWORDS = [
+    'cookieyes', 'cookie yes', 'cookie-yes',
+    'onetrust', 'one trust',
+    'didomi',
+    'axeptio',
+    'cookiebot', 'cookie bot', 'cookie-bot',
+    'consentmanager', 'consent manager',
+    'usercentrics',
+    'klaro',
+    'quantcast',
+    'consent mode', 'consent-mode', 'consentmode',
+    'cmp',
+    'rgpd', 'gdpr',
+    'cookie banner', 'cookiebanner',
+    'cookie consent', 'cookieconsent',
+  ]
+
+  const isConsentTag = (t: GTMTag): boolean => {
+    const name = t.name.toLowerCase()
+    const type = (t.type || '').toLowerCase()
+
+    // Nom contient un mot-clé CMP
+    if (CMP_KEYWORDS.some(k => name.includes(k))) return true
+
+    // Type contient un mot-clé CMP (community templates: cvt_ prefix possible)
+    if (CMP_KEYWORDS.some(k => type.includes(k))) return true
+
+    // Tag de type communauté (cvt_) avec "consent" dans le nom
+    if (type.startsWith('cvt_') && name.includes('consent')) return true
+
+    // Type spécifique au Consent Mode GTM natif
+    if (type === 'consent_init_tag' || type === 'gconsent') return true
+
+    // Paramètre avec clé consent/cmp
+    if (t.parameter?.some(p =>
+      p.key?.toLowerCase().includes('consent') ||
+      p.value?.toLowerCase().includes('consent_default') ||
+      p.value?.toLowerCase().includes('analytics_storage')
+    )) return true
+
+    return false
+  }
+
+  const consentTemplateTag = tags.find(isConsentTag)
 
   let consentModeTemplateType: GTMChecks['consentModeTemplateType'] = null
   if (consentTemplateTag) {
     const n = consentTemplateTag.name.toLowerCase()
-    if (n.includes('cookieyes')) consentModeTemplateType = 'cookieyes'
-    else if (n.includes('onetrust')) consentModeTemplateType = 'onetrust'
-    else if (n.includes('didomi')) consentModeTemplateType = 'didomi'
-    else if (n.includes('axeptio')) consentModeTemplateType = 'axeptio'
-    else consentModeTemplateType = 'custom'
+    const tp = (consentTemplateTag.type || '').toLowerCase()
+    const combined = n + ' ' + tp
+    if (combined.includes('cookieyes') || combined.includes('cookie-yes'))        consentModeTemplateType = 'cookieyes'
+    else if (combined.includes('onetrust') || combined.includes('one trust'))     consentModeTemplateType = 'onetrust'
+    else if (combined.includes('didomi'))                                          consentModeTemplateType = 'didomi'
+    else if (combined.includes('axeptio'))                                         consentModeTemplateType = 'axeptio'
+    else if (combined.includes('cookiebot') || combined.includes('cookie bot'))   consentModeTemplateType = 'cookieyes'
+    else                                                                           consentModeTemplateType = 'custom'
   }
 
   // ── dataLayer variables ───────────────────────────────────────────────────
