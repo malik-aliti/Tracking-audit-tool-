@@ -4,86 +4,209 @@ import { useState, useEffect, useCallback } from 'react'
 import type { AuditReport, ScanRawData, PlatformData, CheckResult } from '@/types'
 import type { GTMData } from '@/lib/gtm'
 
-// ─── Status config ────────────────────────────────────────────────────────────
-const ST = {
-  ok:     { bg:'#f0fdf4', border:'#86efac', text:'#166534', dot:'#22c55e', icon:'✓', label:'OK' },
-  warn:   { bg:'#fffbeb', border:'#fcd34d', text:'#92400e', dot:'#f59e0b', icon:'⚠', label:'Attention' },
-  fail:   { bg:'#fff1f2', border:'#fca5a5', text:'#991b1b', dot:'#ef4444', icon:'✕', label:'Échec' },
-  manual: { bg:'#f0f4ff', border:'#a5b4fc', text:'#3730a3', dot:'#818cf8', icon:'○', label:'Manuel' },
-  na:     { bg:'#f8fafc', border:'#e2e8f0', text:'#64748b', dot:'#94a3b8', icon:'—', label:'N/A' },
+// ─── Design tokens (Google/Material style) ────────────────────────────────────
+const C = {
+  blue:    '#1a73e8',
+  blueBg:  '#e8f0fe',
+  green:   '#34a853',
+  greenBg: '#e6f4ea',
+  red:     '#ea4335',
+  redBg:   '#fce8e6',
+  yellow:  '#f9ab00',
+  yellowBg:'#fef7e0',
+  purple:  '#9334e6',
+  purpleBg:'#f3e8fd',
+  text:    '#202124',
+  sub:     '#5f6368',
+  muted:   '#9aa0a6',
+  border:  '#dadce0',
+  bg:      '#f8f9fa',
+  white:   '#ffffff',
+  surface: '#ffffff',
 }
 
-const CAT_LABELS: Record<string, string> = {
-  consent: '🔒 Consentement & RGPD',
-  tag_base: '🏷️ Taggage de base',
-  ga4: '📊 GA4 & Analytics',
-  google_ads: '⚡ Google Ads',
-  meta: '🎯 Meta',
-  qa: '✅ Qualité & QA',
-  user_journey: '🗺️ Parcours utilisateur',
-  performance: '⚡ Performance',
+const ST = {
+  ok:     { bg: C.greenBg,  border: '#a8d5b5', text: C.green,  dot: C.green,  icon: 'check',  label: 'Conforme'  },
+  warn:   { bg: C.yellowBg, border: '#f5d88a', text: '#b06000', dot: C.yellow, icon: 'warn',   label: 'Attention' },
+  fail:   { bg: C.redBg,    border: '#f5c6c2', text: C.red,    dot: C.red,    icon: 'error',  label: 'Échec'     },
+  manual: { bg: C.purpleBg, border: '#d4adfd', text: C.purple, dot: C.purple, icon: 'manual', label: 'Manuel'    },
+  na:     { bg: C.bg,       border: C.border,  text: C.sub,    dot: C.muted,  icon: 'na',     label: 'N/A'       },
+}
+
+const CAT_META: Record<string, { label: string; icon: JSX.Element }> = {
+  consent:      { label: 'Consentement & RGPD',    icon: <ShieldIcon /> },
+  tag_base:     { label: 'Taggage de base',         icon: <TagIcon /> },
+  ga4:          { label: 'GA4 & Analytics',         icon: <ChartIcon /> },
+  google_ads:   { label: 'Google Ads',              icon: <AdsIcon /> },
+  meta:         { label: 'Meta',                    icon: <MetaIcon /> },
+  qa:           { label: 'Qualité & QA',            icon: <CheckCircleIcon /> },
+  user_journey: { label: 'Parcours utilisateur',    icon: <MapIcon /> },
+  performance:  { label: 'Performance',             icon: <SpeedIcon /> },
 }
 
 const TAG_COLORS: Record<string, [string, string]> = {
-  Privacy: ['#fef3c7', '#92400e'], CMP: ['#fef3c7', '#92400e'],
-  TCF: ['#fef9c3', '#854d0e'], 'Consent Mode': ['#fef9c3', '#854d0e'],
-  Google: ['#dbeafe', '#1e40af'], GTM: ['#dbeafe', '#1e40af'],
-  'Google Ads': ['#e0e7ff', '#3730a3'], 'Enhanced Conversions': ['#e0e7ff', '#3730a3'],
-  GA4: ['#d1fae5', '#065f46'], Events: ['#d1fae5', '#065f46'],
-  Meta: ['#ede9fe', '#5b21b6'], CAPI: ['#ede9fe', '#5b21b6'], 'Advanced Matching': ['#ede9fe', '#5b21b6'],
-  Attribution: ['#fce7f3', '#9d174d'], QA: ['#fee2e2', '#991b1b'],
-  Conversions: ['#e0e7ff', '#3730a3'], 'Micro-signaux': ['#f0fdf4', '#065f46'],
-  Performance: ['#fef3c7', '#92400e'], Platform: ['#dbeafe', '#1e40af'],
+  Privacy: [C.yellowBg, '#b06000'], CMP: [C.yellowBg, '#b06000'],
+  TCF: [C.yellowBg, '#b06000'], 'Consent Mode': [C.yellowBg, '#b06000'],
+  Google: [C.blueBg, '#1557b0'], GTM: [C.blueBg, '#1557b0'],
+  'Google Ads': ['#e8eaf6', '#3949ab'], 'Enhanced Conversions': ['#e8eaf6', '#3949ab'],
+  GA4: [C.greenBg, '#137333'], Events: [C.greenBg, '#137333'],
+  Meta: [C.purpleBg, '#6a1bcd'], CAPI: [C.purpleBg, '#6a1bcd'], 'Advanced Matching': [C.purpleBg, '#6a1bcd'],
+  Attribution: ['#fce4ec', '#ad1457'], QA: [C.redBg, '#c62828'],
+  Conversions: ['#e8eaf6', '#3949ab'], 'Micro-signaux': [C.greenBg, '#137333'],
+  Performance: [C.yellowBg, '#b06000'], Platform: [C.blueBg, '#1557b0'],
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function ScoreRing({ score, size = 80 }: { score: number; size?: number }) {
-  const r = (size - 10) / 2
-  const circ = 2 * Math.PI * r
-  const offset = circ - (score / 100) * circ
-  const color = score >= 75 ? '#22c55e' : score >= 50 ? '#f59e0b' : '#ef4444'
+// ─── SVG Icon components ──────────────────────────────────────────────────────
+function ShieldIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+}
+function TagIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+}
+function ChartIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+}
+function AdsIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+}
+function MetaIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32"/></svg>
+}
+function CheckCircleIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+}
+function MapIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+}
+function SpeedIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2z"/><polyline points="12 6 12 12 16 14"/></svg>
+}
+function CopyIcon({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+}
+function CheckIcon({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+}
+function XIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+}
+function ArrowRightIcon({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+}
+function ChevronDownIcon({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+}
+function ChevronUpIcon({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+}
+function SearchIcon({ size = 18, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+}
+function GoogleLogoIcon({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={8} />
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={8}
-        strokeDasharray={circ} strokeDashoffset={offset}
-        strokeLinecap="round" style={{ transition: 'stroke-dashoffset 1s ease' }} />
-      <text x={size/2} y={size/2} textAnchor="middle" dominantBaseline="middle"
-        style={{ transform: 'rotate(90deg)', transformOrigin: `${size/2}px ${size/2}px`, fill: '#0f172a', fontSize: size < 60 ? 14 : 18, fontWeight: 700, fontFamily: 'DM Sans, sans-serif' }}>
-        {score}
-      </text>
+    <svg width={size} height={size} viewBox="0 0 24 24">
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
     </svg>
   )
 }
-
-function TagPill({ tag }: { tag: string }) {
-  const [bg, tc] = TAG_COLORS[tag] || ['#f1f5f9', '#475569']
-  return <span style={{ fontSize: 9, fontWeight: 600, padding: '1px 6px', borderRadius: 99, background: bg, color: tc, border: `0.5px solid ${tc}22` }}>{tag}</span>
+function MetaLogoIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="#0866FF">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15.5c-2.97 0-5.4-2.15-5.93-4.96L8 11l2 4 1-2 1 2 1-2 2 4 2.93-1.46C17.4 15.35 15 17.5 12 17.5zM12 6.5c1.12 0 2.14.37 2.96.99L12 12 9.04 7.49A4.48 4.48 0 0112 6.5zm4.87 8.71L14 10l-1 2-1-2-1 2-2-4-2 1.5A5.48 5.48 0 0112 6.5c3.04 0 5.5 2.46 5.5 5.5 0 1.27-.43 2.44-1.13 3.39l-.5-.68z"/>
+    </svg>
+  )
+}
+function AlertTriangleIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
 }
 
+// ─── Status icon ──────────────────────────────────────────────────────────────
+function StatusIcon({ status, size = 16 }: { status: string; size?: number }) {
+  if (status === 'ok')     return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={C.green} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+  if (status === 'fail')   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+  if (status === 'warn')   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={C.yellow} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+  if (status === 'manual') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={C.purple} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+}
+
+// ─── Score ring ───────────────────────────────────────────────────────────────
+function ScoreRing({ score, size = 80, label }: { score: number; size?: number; label?: string }) {
+  const r = (size - 10) / 2
+  const circ = 2 * Math.PI * r
+  const offset = circ - (score / 100) * circ
+  const color = score >= 75 ? C.green : score >= 50 ? C.yellow : C.red
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e8eaed" strokeWidth={size > 60 ? 8 : 6} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={size > 60 ? 8 : 6}
+          strokeDasharray={circ} strokeDashoffset={offset}
+          strokeLinecap="round" style={{ transition: 'stroke-dashoffset 1s ease' }} />
+        <text x={size/2} y={size/2} textAnchor="middle" dominantBaseline="middle"
+          style={{ transform: 'rotate(90deg)', transformOrigin: `${size/2}px ${size/2}px`, fill: C.text, fontSize: size < 60 ? 13 : 20, fontWeight: 700, fontFamily: 'Google Sans, sans-serif' }}>
+          {score}
+        </text>
+      </svg>
+      {label && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500, textAlign: 'center' }}>{label}</span>}
+    </div>
+  )
+}
+
+// ─── Tag pill ─────────────────────────────────────────────────────────────────
+function TagPill({ tag }: { tag: string }) {
+  const [bg, tc] = TAG_COLORS[tag] || [C.bg, C.sub]
+  return (
+    <span style={{ fontSize: 10, fontWeight: 500, padding: '2px 8px', borderRadius: 12, background: bg, color: tc, border: `1px solid ${tc}20`, letterSpacing: '0.01em' }}>
+      {tag}
+    </span>
+  )
+}
+
+// ─── Copy button ──────────────────────────────────────────────────────────────
 function CopyBtn({ text }: { text: string }) {
   const [done, setDone] = useState(false)
   return (
-    <button onClick={() => { navigator.clipboard?.writeText(text); setDone(true); setTimeout(() => setDone(false), 1800) }}
-      style={{ position: 'absolute', top: 6, right: 6, background: done ? '#059669' : '#1e293b', border: 'none', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 9, fontWeight: 700, color: done ? '#fff' : '#94a3b8', transition: 'all .2s' }}>
-      {done ? '✓' : 'Copier'}
+    <button onClick={() => { navigator.clipboard?.writeText(text); setDone(true); setTimeout(() => setDone(false), 2000) }}
+      style={{ position: 'absolute', top: 8, right: 8, background: done ? C.green : '#3c4043', border: 'none', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, transition: 'all .2s' }}>
+      {done ? <CheckIcon size={12} color="white" /> : <CopyIcon size={12} color="#9aa0a6" />}
+      <span style={{ fontSize: 10, fontWeight: 600, color: done ? 'white' : '#9aa0a6' }}>{done ? 'Copié' : 'Copier'}</span>
     </button>
   )
 }
 
-// ─── Connection status badge ──────────────────────────────────────────────────
-function PlatformBadge({ name, icon, connected, onConnect }: { name: string; icon: string; connected: boolean; onConnect: () => void }) {
+// ─── Impact badge ─────────────────────────────────────────────────────────────
+function ImpactBadge({ impact }: { impact?: string }) {
+  if (!impact || impact === 'low') return null
+  const cfg = {
+    critical: { bg: C.redBg,    color: C.red,    label: 'Critique' },
+    high:     { bg: C.yellowBg, color: '#b06000', label: 'Haute' },
+    medium:   { bg: C.blueBg,   color: C.blue,    label: 'Moyenne' },
+  }[impact]
+  if (!cfg) return null
+  return (
+    <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: cfg.bg, color: cfg.color, letterSpacing: '0.02em' }}>
+      {cfg.label}
+    </span>
+  )
+}
+
+// ─── Platform connection chip ─────────────────────────────────────────────────
+function PlatformChip({ name, logo, connected, onConnect }: { name: string; logo: JSX.Element; connected: boolean; onConnect: () => void }) {
   return (
     <button onClick={onConnect} style={{
-      display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
-      background: connected ? '#f0fdf4' : '#f8fafc',
-      border: `1px solid ${connected ? '#86efac' : '#e2e8f0'}`,
-      borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600,
-      color: connected ? '#166534' : '#64748b', transition: 'all .2s',
+      display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px',
+      background: connected ? C.greenBg : C.white,
+      border: `1px solid ${connected ? '#a8d5b5' : C.border}`,
+      borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: 500,
+      color: connected ? '#137333' : C.sub, transition: 'all .2s',
+      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
     }}>
-      <span style={{ fontSize: 14 }}>{icon}</span>
-      {name}
-      <span style={{ width: 7, height: 7, borderRadius: '50%', background: connected ? '#22c55e' : '#cbd5e1', flexShrink: 0 }} />
+      {logo}
+      <span>{name}</span>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: connected ? C.green : '#bdc1c6', flexShrink: 0 }} />
     </button>
   )
 }
@@ -91,30 +214,35 @@ function PlatformBadge({ name, icon, connected, onConnect }: { name: string; ico
 // ─── Check row ────────────────────────────────────────────────────────────────
 function CheckRow({ check, onOpen }: { check: CheckResult; onOpen: (c: CheckResult) => void }) {
   const cfg = ST[check.status] || ST.na
-  const rowBg = check.status === 'fail' ? '#fff8f8' : check.status === 'ok' ? '#fafffe' : 'white'
+  const [hovered, setHovered] = useState(false)
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 16px', borderBottom: '0.5px solid #f1f5f9', background: rowBg, transition: 'background .2s' }}>
-      <div style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, background: cfg.bg, border: `1px solid ${cfg.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: cfg.text, marginTop: 2 }}>
-        {cfg.icon}
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: hovered ? '#f8f9fa' : C.white, transition: 'background .15s', cursor: 'default' }}>
+      <div style={{ flexShrink: 0, marginTop: 1 }}>
+        <StatusIcon status={check.status} size={18} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginBottom: 2 }}>
-          {check.impact === 'critical' && <span style={{ fontSize: 8, fontWeight: 800, background: '#fee2e2', color: '#991b1b', padding: '1px 5px', borderRadius: 3 }}>CRITIQUE</span>}
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>{check.label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{check.label}</span>
+          <ImpactBadge impact={check.impact} />
         </div>
-        <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.5, marginBottom: 5 }}>{check.finding}</div>
-        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.5, marginBottom: 6 }}>{check.finding}</div>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {check.tags.map(t => <TagPill key={t} tag={t} />)}
         </div>
       </div>
-      <button onClick={() => onOpen(check)} style={{ flexShrink: 0, padding: '5px 11px', fontSize: 10, fontWeight: 700, border: '0.5px solid #e2e8f0', borderRadius: 6, background: 'white', color: '#6366f1', cursor: 'pointer' }}>
-        Détails →
+      <button
+        onClick={() => onOpen(check)}
+        style={{ flexShrink: 0, padding: '6px 14px', fontSize: 12, fontWeight: 500, border: `1px solid ${hovered ? C.blue : C.border}`, borderRadius: 6, background: hovered ? C.blueBg : C.white, color: hovered ? C.blue : C.sub, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, transition: 'all .15s', whiteSpace: 'nowrap' }}>
+        Détails <ArrowRightIcon size={12} color={hovered ? C.blue : C.sub} />
       </button>
     </div>
   )
 }
 
-// ─── Modal ────────────────────────────────────────────────────────────────────
+// ─── Check detail modal ───────────────────────────────────────────────────────
 function CheckModal({ check, onClose, onGoFix }: { check: CheckResult; onClose: () => void; onGoFix: () => void }) {
   const cfg = ST[check.status] || ST.na
   useEffect(() => {
@@ -124,68 +252,83 @@ function CheckModal({ check, onClose, onGoFix }: { check: CheckResult; onClose: 
   }, [onClose])
 
   return (
-    <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.6)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 300 }}>
-      <div style={{ background: 'white', borderRadius: 16, width: '100%', maxWidth: 640, maxHeight: '88vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 40px 80px rgba(0,0,0,.3)' }}>
-        <div style={{ padding: '14px 18px', borderBottom: '0.5px solid #f1f5f9' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+    <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, background: 'rgba(32,33,36,.5)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 300 }}>
+      <div className="animate-in" style={{ background: C.white, borderRadius: 12, width: '100%', maxWidth: 640, maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 48px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06)' }}>
+        {/* Header */}
+        <div style={{ padding: '20px 24px 16px', borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ marginTop: 2 }}><StatusIcon status={check.status} size={20} /></div>
             <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 5 }}>
-                {check.impact === 'critical' && <span style={{ fontSize: 8, fontWeight: 800, background: '#fee2e2', color: '#991b1b', padding: '1px 5px', borderRadius: 3 }}>CRITIQUE</span>}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                <ImpactBadge impact={check.impact} />
                 {check.tags.map(t => <TagPill key={t} tag={t} />)}
               </div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', marginBottom: 5 }}>{check.label}</div>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '8px 11px', borderRadius: 8, background: cfg.bg, border: `0.5px solid ${cfg.border}` }}>
-                <span style={{ fontSize: 14, flexShrink: 0 }}>{cfg.icon}</span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: cfg.text }}>{check.finding}</span>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 8 }}>{check.label}</h3>
+              <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderRadius: 8, background: cfg.bg, border: `1px solid ${cfg.border}` }}>
+                <span style={{ fontSize: 12, color: cfg.text, lineHeight: 1.6 }}>{check.finding}</span>
               </div>
             </div>
-            <button onClick={onClose} style={{ background: '#f1f5f9', border: 'none', borderRadius: 7, width: 28, height: 28, cursor: 'pointer', fontSize: 15, color: '#64748b', flexShrink: 0 }}>×</button>
+            <button onClick={onClose} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background .15s' }}>
+              <XIcon size={14} color={C.sub} />
+            </button>
           </div>
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
           {check.details?.length > 0 && (
-            <>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', letterSpacing: '.09em', textTransform: 'uppercase', marginBottom: 7 }}>Données analysées</div>
-              {check.details.map((d, i) => (
-                <div key={i} style={{ display: 'flex', gap: 7, padding: '4px 0', borderBottom: '0.5px solid #f8fafc', fontSize: 11, color: '#334155', lineHeight: 1.55 }}>
-                  <span style={{ color: '#6366f1', flexShrink: 0, fontSize: 9, marginTop: 2 }}>◆</span>
-                  <span>{d}</span>
-                </div>
-              ))}
-            </>
+            <section style={{ marginBottom: 24 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 10 }}>Données analysées</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {check.details.map((d, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 12px', borderRadius: 6, background: C.bg, fontSize: 12, color: C.text, lineHeight: 1.6 }}>
+                    <span style={{ color: C.blue, flexShrink: 0, marginTop: 3 }}>•</span>
+                    <span>{d}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
+
           {check.actions?.length > 0 && (
-            <>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', letterSpacing: '.09em', textTransform: 'uppercase', margin: '14px 0 7px' }}>Actions recommandées</div>
-              {check.actions.map((a, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, padding: '6px 10px', marginBottom: 4, background: '#fafafa', border: '0.5px solid #f1f5f9', borderRadius: 7, fontSize: 11, color: '#1e293b', lineHeight: 1.55 }}>
-                  <span style={{ fontWeight: 700, color: '#6366f1', minWidth: 16, flexShrink: 0 }}>{i + 1}.</span>
-                  <span>{a}</span>
-                </div>
-              ))}
-            </>
+            <section style={{ marginBottom: 24 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 10 }}>Actions recommandées</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {check.actions.map((a, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 12, padding: '10px 14px', background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text, lineHeight: 1.6 }}>
+                    <span style={{ width: 20, height: 20, borderRadius: '50%', background: C.blue, color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>{i + 1}</span>
+                    <span>{a}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
+
           {check.consoleCommands?.length > 0 && (
-            <>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', letterSpacing: '.09em', textTransform: 'uppercase', margin: '14px 0 7px' }}>Commandes console DevTools</div>
-              {check.consoleCommands.map((cmd, i) => (
-                <div key={i} style={{ position: 'relative', marginBottom: 6 }}>
-                  <pre style={{ background: '#0f172a', borderRadius: 7, padding: '10px 40px 10px 12px', fontSize: 10, color: '#7dd3fc', fontFamily: 'DM Mono, monospace', lineHeight: 1.6, overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    {cmd}
-                  </pre>
-                  <CopyBtn text={cmd} />
-                </div>
-              ))}
-            </>
+            <section>
+              <h4 style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 10 }}>Commandes DevTools</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {check.consoleCommands.map((cmd, i) => (
+                  <div key={i} style={{ position: 'relative' }}>
+                    <pre style={{ background: '#1e2228', borderRadius: 8, padding: '12px 50px 12px 16px', fontSize: 11, color: '#89b4fa', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.7, overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {cmd}
+                    </pre>
+                    <CopyBtn text={cmd} />
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
         </div>
-        <div style={{ padding: '10px 18px', borderTop: '0.5px solid #f1f5f9', display: 'flex', justifyContent: 'space-between' }}>
-          {(check.status === 'fail' || check.status === 'warn') && (
-            <button onClick={onGoFix} style={{ padding: '7px 14px', fontSize: 11, fontWeight: 700, background: '#6366f1', color: 'white', border: 'none', borderRadius: 7, cursor: 'pointer' }}>
-              Voir le plan de correction →
+
+        {/* Footer */}
+        <div style={{ padding: '14px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {(check.status === 'fail' || check.status === 'warn') ? (
+            <button onClick={onGoFix} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 500, background: C.blue, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              Voir le plan de correction <ArrowRightIcon size={14} color="white" />
             </button>
-          )}
-          <button onClick={onClose} style={{ marginLeft: 'auto', padding: '7px 14px', fontSize: 11, fontWeight: 600, background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 7, cursor: 'pointer' }}>
+          ) : <span />}
+          <button onClick={onClose} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 500, background: C.white, color: C.sub, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer' }}>
             Fermer
           </button>
         </div>
@@ -199,88 +342,151 @@ function FixPlan({ checks }: { checks: CheckResult[] }) {
   const [openIdx, setOpenIdx] = useState<number | null>(0)
   const issues = checks.filter(c => c.status === 'fail' || c.status === 'warn')
     .sort((a, b) => {
-      const order = { critical: 0, high: 1, medium: 2, low: 3 }
-      return (order[a.impact || 'medium'] || 2) - (order[b.impact || 'medium'] || 2)
+      const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+      return (order[a.impact || 'medium'] ?? 2) - (order[b.impact || 'medium'] ?? 2)
     })
   const [done, setDone] = useState<Set<string>>(new Set())
 
   if (issues.length === 0) return (
-    <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>Aucun problème détecté !</div>
+    <div style={{ textAlign: 'center', padding: '60px 20px', color: C.sub }}>
+      <div style={{ width: 56, height: 56, background: C.greenBg, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+        <CheckCircleIcon size={28} color={C.green} />
+      </div>
+      <div style={{ fontSize: 16, fontWeight: 500, color: C.text, marginBottom: 4 }}>Aucun problème détecté</div>
+      <div style={{ fontSize: 13, color: C.sub }}>Votre configuration de tracking semble conforme.</div>
     </div>
   )
 
-  const urgencyColor = (imp?: string) => imp === 'critical' ? '#dc2626' : imp === 'high' ? '#d97706' : imp === 'medium' ? '#2563eb' : '#64748b'
-  const urgencyBg = (imp?: string) => imp === 'critical' ? '#fee2e2' : imp === 'high' ? '#fef3c7' : imp === 'medium' ? '#dbeafe' : '#f1f5f9'
-  const urgencyLabel = (imp?: string) => imp === 'critical' ? 'URGENT' : imp === 'high' ? 'HAUTE' : imp === 'medium' ? 'MOYENNE' : 'FAIBLE'
+  const critCount = issues.filter(i => i.impact === 'critical').length
+  const highCount = issues.filter(i => i.impact === 'high').length
 
   return (
     <div>
-      <div style={{ background: '#fff1f2', border: '0.5px solid #fca5a5', borderRadius: 9, padding: '11px 14px', marginBottom: 14, display: 'flex', gap: 9 }}>
-        <span style={{ fontSize: 18 }}>🚨</span>
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#991b1b', marginBottom: 2 }}>
-            {issues.filter(i => i.impact === 'critical').length} critique(s) · {issues.filter(i => i.impact === 'high').length} haute(s) priorité
+      {/* Summary banner */}
+      {(critCount > 0 || highCount > 0) && (
+        <div style={{ background: C.redBg, border: `1px solid #f5c6c2`, borderRadius: 8, padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <AlertTriangleIcon size={18} color={C.red} />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.red, marginBottom: 2 }}>
+              {critCount > 0 && `${critCount} problème${critCount > 1 ? 's' : ''} critique${critCount > 1 ? 's' : ''}`}
+              {critCount > 0 && highCount > 0 && ' · '}
+              {highCount > 0 && `${highCount} haute${highCount > 1 ? 's' : ''} priorité`}
+            </div>
+            <div style={{ fontSize: 12, color: '#c62828' }}>Traitez les problèmes critiques en priorité pour éviter toute perte de données.</div>
           </div>
-          <div style={{ fontSize: 11, color: '#7f1d1d' }}>Commencer par les correctifs marqués URGENT.</div>
         </div>
-      </div>
-      {issues.map((issue, idx) => (
-        <div key={issue.id} style={{ background: 'white', border: `0.5px solid ${issue.status === 'fail' ? '#fca5a5' : '#e2e8f0'}`, borderRadius: 10, marginBottom: 8, overflow: 'hidden' }}>
-          <div onClick={() => setOpenIdx(openIdx === idx ? null : idx)} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 16px', cursor: 'pointer' }}>
-            <div style={{ width: 26, height: 26, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0, background: urgencyBg(issue.impact), color: urgencyColor(issue.impact) }}>
-              {idx + 1}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 3 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>{issue.label}</span>
-                <span style={{ fontSize: 8, fontWeight: 800, padding: '2px 6px', borderRadius: 99, background: urgencyBg(issue.impact), color: urgencyColor(issue.impact) }}>{urgencyLabel(issue.impact)}</span>
-              </div>
-              <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.5 }}>{issue.finding}</div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {done.has(issue.id) && <span style={{ fontSize: 10, fontWeight: 700, color: '#059669' }}>✓ Corrigé</span>}
-              <span style={{ fontSize: 10, color: '#cbd5e1' }}>{openIdx === idx ? '▲' : '▼'}</span>
-            </div>
-          </div>
-          {openIdx === idx && (
-            <div style={{ padding: '0 16px 14px' }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 7, marginTop: 4 }}>Plan d'action étape par étape</div>
-              {issue.actions.map((a, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, padding: '7px 10px', marginBottom: 5, background: '#fafafa', border: '0.5px solid #f1f5f9', borderRadius: 8, fontSize: 11, color: '#1e293b', lineHeight: 1.6 }}>
-                  <span style={{ fontWeight: 800, color: '#6366f1', minWidth: 18, flexShrink: 0 }}>{i + 1}.</span>
-                  <span>{a}</span>
+      )}
+
+      {/* Issues list */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {issues.map((issue, idx) => {
+          const isDone = done.has(issue.id)
+          const isOpen = openIdx === idx
+          return (
+            <div key={issue.id} style={{ background: C.white, border: `1px solid ${isDone ? '#a8d5b5' : issue.status === 'fail' ? '#f5c6c2' : C.border}`, borderRadius: 10, overflow: 'hidden', transition: 'border-color .2s' }}>
+              <div onClick={() => setOpenIdx(isOpen ? null : idx)} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 18px', cursor: 'pointer', background: isDone ? C.greenBg : C.white }}>
+                <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, background: isDone ? C.green : C.blue, color: 'white' }}>
+                  {isDone ? <CheckIcon size={14} color="white" /> : idx + 1}
                 </div>
-              ))}
-              {issue.consoleCommands && issue.consoleCommands.length > 0 && (
-                <>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 6, marginTop: 10 }}>Vérification DevTools</div>
-                  {issue.consoleCommands.map((cmd, i) => (
-                    <div key={i} style={{ position: 'relative', marginBottom: 5 }}>
-                      <pre style={{ background: '#0f172a', borderRadius: 7, padding: '9px 40px 9px 12px', fontSize: 10, color: '#7dd3fc', fontFamily: 'DM Mono, monospace', lineHeight: 1.6, overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
-                        {cmd}
-                      </pre>
-                      <CopyBtn text={cmd} />
-                    </div>
-                  ))}
-                </>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-                <button onClick={() => setDone(prev => { const n = new Set(prev); done.has(issue.id) ? n.delete(issue.id) : n.add(issue.id); return n })}
-                  style={{ padding: '6px 14px', fontSize: 10, fontWeight: 700, background: done.has(issue.id) ? '#059669' : '#f1f5f9', color: done.has(issue.id) ? 'white' : '#475569', border: '0.5px solid #e2e8f0', borderRadius: 7, cursor: 'pointer', transition: 'all .2s' }}>
-                  {done.has(issue.id) ? '✓ Correctif appliqué' : 'Marquer comme corrigé'}
-                </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: isDone ? '#137333' : C.text }}>{issue.label}</span>
+                    <ImpactBadge impact={issue.impact} />
+                    {isDone && <span style={{ fontSize: 11, fontWeight: 600, color: C.green }}>· Corrigé</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.5 }}>{issue.finding}</div>
+                </div>
+                <div style={{ flexShrink: 0, color: C.muted }}>
+                  {isOpen ? <ChevronUpIcon size={16} color={C.sub} /> : <ChevronDownIcon size={16} color={C.sub} />}
+                </div>
               </div>
+
+              {isOpen && (
+                <div style={{ padding: '0 18px 18px', borderTop: `1px solid ${C.border}`, background: C.bg }}>
+                  <h4 style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: '.08em', textTransform: 'uppercase', margin: '14px 0 10px' }}>Plan d'action</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {issue.actions.map((a, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 10, padding: '9px 12px', background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text, lineHeight: 1.6 }}>
+                        <span style={{ width: 18, height: 18, borderRadius: '50%', background: C.blue, color: 'white', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>{i + 1}</span>
+                        <span>{a}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {issue.consoleCommands && issue.consoleCommands.length > 0 && (
+                    <>
+                      <h4 style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: '.08em', textTransform: 'uppercase', margin: '14px 0 10px' }}>Vérification DevTools</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {issue.consoleCommands.map((cmd, i) => (
+                          <div key={i} style={{ position: 'relative' }}>
+                            <pre style={{ background: '#1e2228', borderRadius: 8, padding: '10px 50px 10px 14px', fontSize: 11, color: '#89b4fa', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.6, overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                              {cmd}
+                            </pre>
+                            <CopyBtn text={cmd} />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+                    <button
+                      onClick={() => setDone(prev => { const n = new Set(prev); isDone ? n.delete(issue.id) : n.add(issue.id); return n })}
+                      style={{ padding: '7px 16px', fontSize: 12, fontWeight: 500, background: isDone ? C.green : C.white, color: isDone ? 'white' : C.sub, border: `1px solid ${isDone ? C.green : C.border}`, borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all .2s' }}>
+                      {isDone ? <><CheckIcon size={12} color="white" /> Correctif appliqué</> : 'Marquer comme corrigé'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      ))}
+          )
+        })}
+      </div>
     </div>
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Loading steps ────────────────────────────────────────────────────────────
+function LoadingView({ phase, phaseMsg, url }: { phase: string; phaseMsg: string; url: string }) {
+  const steps = [
+    { id: 'scan', label: 'Scan de la page', sub: 'DOM, cookies, réseau, scripts' },
+    { id: 'platform', label: 'Données plateformes', sub: 'GA4, Google Ads, Meta' },
+    { id: 'analyze', label: 'Analyse IA', sub: '30+ vérifications RGPD & tracking' },
+  ]
+  const activeStep = phase === 'scanning' ? 0 : phase === 'analyzing' ? 2 : 1
+
+  return (
+    <div style={{ maxWidth: 520, margin: '0 auto', padding: '64px 24px', textAlign: 'center' }}>
+      <div style={{ width: 48, height: 48, border: `3px solid ${C.border}`, borderTop: `3px solid ${C.blue}`, borderRadius: '50%', margin: '0 auto 32px', animation: 'spin 0.8s linear infinite' }} />
+      <h2 style={{ fontSize: 20, fontWeight: 600, color: C.text, marginBottom: 6 }}>
+        {phase === 'scanning' ? 'Analyse en cours' : 'Traitement des données'}
+      </h2>
+      <p style={{ fontSize: 13, color: C.sub, marginBottom: 32 }}>{url}</p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {steps.map((step, i) => {
+          const isActive = i === activeStep
+          const isDone = i < activeStep
+          return (
+            <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', background: isActive ? C.blueBg : isDone ? C.greenBg : C.bg, border: `1px solid ${isActive ? '#c6d9fc' : isDone ? '#a8d5b5' : C.border}`, borderRadius: 10, textAlign: 'left', transition: 'all .3s' }}>
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: isActive ? C.blue : isDone ? C.green : C.border, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all .3s' }}>
+                {isDone ? <CheckIcon size={14} color="white" /> : isActive ? (
+                  <div style={{ width: 10, height: 10, border: '2px solid rgba(255,255,255,.4)', borderTop: '2px solid white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                ) : <span style={{ fontSize: 11, fontWeight: 700, color: C.white }}>{i + 1}</span>}
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: isActive ? C.blue : isDone ? '#137333' : C.sub }}>{step.label}</div>
+                <div style={{ fontSize: 11, color: isActive ? C.blue : C.muted, opacity: 0.8 }}>{step.sub}</div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── Main app ─────────────────────────────────────────────────────────────────
 export default function Home() {
   const [url, setUrl] = useState('')
   const [phase, setPhase] = useState<'idle' | 'scanning' | 'analyzing' | 'done' | 'error'>('idle')
@@ -294,12 +500,10 @@ export default function Home() {
     try { return JSON.parse(sessionStorage.getItem('trackaudit_connections') || '{}') } catch { return {} }
   })
 
-  // Sync connections to sessionStorage so OAuth redirects don't wipe the other platform
   useEffect(() => {
     try { sessionStorage.setItem('trackaudit_connections', JSON.stringify(connections)) } catch {}
   }, [connections])
 
-  // Handle OAuth callbacks
   useEffect(() => {
     if (typeof window === 'undefined') return
     const params = new URLSearchParams(window.location.search)
@@ -312,12 +516,11 @@ export default function Home() {
         } else if (data.platform === 'meta') {
           setConnections(prev => ({ ...prev, meta: { accessToken: data.accessToken, pixelName: data.pixelName } }))
         }
-      } catch (e) {}
+      } catch {}
       window.history.replaceState({}, '', '/')
     }
   }, [])
 
-  // Init sections
   useEffect(() => {
     if (report) {
       const cats = [...new Set(report.checks.map(c => c.category))]
@@ -325,8 +528,6 @@ export default function Home() {
     }
   }, [report])
 
-  // Expose __trackaudit pour injection depuis Claude in Chrome
-  // Reçoit les données navigateur et lance l'analyse complète
   useEffect(() => {
     const handleBrowserData = async (browserData: any) => {
       if (!browserData || browserData._source !== 'browser') return
@@ -336,11 +537,7 @@ export default function Home() {
       setError('')
       setReport(null)
       try {
-        const scanRes = await fetch('/api/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ browserData }),
-        })
+        const scanRes = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ browserData }) })
         const scanJson = await scanRes.json()
         if (!scanJson.success) throw new Error(scanJson.error || 'Erreur scan')
         setPhase('analyzing')
@@ -351,10 +548,7 @@ export default function Home() {
           try {
             const r = await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken }) })
             const j = await r.json()
-            if (j.success) {
-              platformData = { ...platformData, ga4: j.ga4, googleAds: j.googleAds }
-              if (j.gtm) gtmData = j.gtm
-            }
+            if (j.success) { platformData = { ...platformData, ga4: j.ga4, googleAds: j.googleAds }; if (j.gtm) gtmData = j.gtm }
           } catch {}
         }
         if (connections.meta?.accessToken) {
@@ -364,11 +558,7 @@ export default function Home() {
             if (j.success) platformData = { ...platformData, meta: j.meta }
           } catch {}
         }
-        const analyzeRes = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scanData: scanJson.data, platformData, gtmData }),
-        })
+        const analyzeRes = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scanData: scanJson.data, platformData, gtmData }) })
         const analyzeJson = await analyzeRes.json()
         if (!analyzeJson.success) throw new Error(analyzeJson.error || 'Erreur analyse')
         setReport(analyzeJson.report)
@@ -382,17 +572,8 @@ export default function Home() {
     return () => { delete (window as any).__trackaudit }
   }, [connections])
 
-  const connectGoogle = async () => {
-    const res = await fetch('/api/google')
-    const { authUrl } = await res.json()
-    window.location.href = authUrl
-  }
-
-  const connectMeta = async () => {
-    const res = await fetch('/api/meta')
-    const { authUrl } = await res.json()
-    window.location.href = authUrl
-  }
+  const connectGoogle = async () => { const res = await fetch('/api/google'); const { authUrl } = await res.json(); window.location.href = authUrl }
+  const connectMeta = async () => { const res = await fetch('/api/meta'); const { authUrl } = await res.json(); window.location.href = authUrl }
 
   const runAudit = useCallback(async () => {
     if (!url.trim()) return
@@ -400,19 +581,12 @@ export default function Home() {
     setPhaseMsg('Chargement de la page et scan du DOM, cookies, réseau...')
     setError('')
     setReport(null)
-
     try {
-      // 1. Scan
-      const scanRes = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
-      })
+      const scanRes = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url.trim() }) })
       const scanJson = await scanRes.json()
       if (!scanJson.success) throw new Error(scanJson.error || 'Erreur de scan')
       const scanData: ScanRawData = scanJson.data
 
-      // 2. Fetch platform data if connected
       setPhase('analyzing')
       setPhaseMsg('Connexion aux plateformes et analyse IA en cours...')
       let platformData: PlatformData | undefined
@@ -420,42 +594,22 @@ export default function Home() {
 
       if (connections.google?.accessToken) {
         try {
-          const gRes = await fetch('/api/google/ga4', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken: connections.google.accessToken }),
-          })
+          const gRes = await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken }) })
           const gJson = await gRes.json()
-          if (gJson.success) {
-            platformData = { ...platformData, ga4: gJson.ga4, googleAds: gJson.googleAds }
-            if (gJson.gtm) gtmData = gJson.gtm
-          }
-        } catch (e) {}
+          if (gJson.success) { platformData = { ...platformData, ga4: gJson.ga4, googleAds: gJson.googleAds }; if (gJson.gtm) gtmData = gJson.gtm }
+        } catch {}
       }
-
       if (connections.meta?.accessToken) {
         try {
-          const mRes = await fetch('/api/meta/pixel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken: connections.meta.accessToken }),
-          })
+          const mRes = await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken }) })
           const mJson = await mRes.json()
-          if (mJson.success) {
-            platformData = { ...platformData, meta: mJson.meta }
-          }
-        } catch (e) {}
+          if (mJson.success) platformData = { ...platformData, meta: mJson.meta }
+        } catch {}
       }
 
-      // 3. Analyze
-      const analyzeRes = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanData, platformData, gtmData }),
-      })
+      const analyzeRes = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scanData, platformData, gtmData }) })
       const analyzeJson = await analyzeRes.json()
       if (!analyzeJson.success) throw new Error(analyzeJson.error || 'Erreur d\'analyse')
-
       setReport(analyzeJson.report)
       setPhase('done')
     } catch (err: any) {
@@ -469,256 +623,361 @@ export default function Home() {
   const failCount = checks.filter(c => c.status === 'fail').length
   const warnCount = checks.filter(c => c.status === 'warn').length
   const okCount = checks.filter(c => c.status === 'ok').length
+  const manualCount = checks.filter(c => c.status === 'manual').length
+
+  const isLoading = phase === 'scanning' || phase === 'analyzing'
+  const showHero = phase === 'idle' || phase === 'error'
 
   return (
-    <div style={{ fontFamily: 'DM Sans, system-ui, sans-serif', background: '#f1f5f9', minHeight: '100vh' }}>
+    <div style={{ fontFamily: "'Google Sans', 'Inter', system-ui, sans-serif", background: C.bg, minHeight: '100vh', color: C.text }}>
 
-      {/* ── HEADER ────────────────────────────────────────────────────────── */}
-      <div style={{ background: '#0f172a', borderBottom: '1px solid #1e293b', padding: '14px 24px' }}>
-        <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 36, height: 36, background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>📡</div>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: 'white', letterSpacing: '-0.03em' }}>TrackAudit</div>
-            <div style={{ fontSize: 10, color: '#64748b' }}>Diagnostic de tracking • RGPD • GA4 • Google Ads • Meta</div>
+      {/* ── TOP NAVIGATION BAR ─────────────────────────────────────────────── */}
+      <header style={{ background: C.white, borderBottom: `1px solid ${C.border}`, position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px', height: 64, display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, background: C.blue, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <SearchIcon size={16} color="white" />
+            </div>
+            <div>
+              <span style={{ fontSize: 17, fontWeight: 700, color: C.text, letterSpacing: '-0.02em' }}>TrackAudit</span>
+              <span style={{ marginLeft: 6, fontSize: 11, color: C.muted, fontWeight: 400 }}>by Tracking Intelligence</span>
+            </div>
           </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <PlatformBadge name="Google" icon="🔵" connected={!!connections.google} onConnect={connectGoogle} />
-            <PlatformBadge name="Meta" icon="🔷" connected={!!connections.meta} onConnect={connectMeta} />
+
+          {/* Spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* Platform connections */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <PlatformChip name="Google" logo={<GoogleLogoIcon size={16} />} connected={!!connections.google} onConnect={connectGoogle} />
+            <PlatformChip name="Meta" logo={<MetaLogoIcon size={16} />} connected={!!connections.meta} onConnect={connectMeta} />
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* ── HERO / URL INPUT ──────────────────────────────────────────────── */}
-      {phase === 'idle' || phase === 'error' ? (
-        <div style={{ background: '#0f172a', padding: '48px 24px 56px' }}>
-          <div style={{ maxWidth: 700, margin: '0 auto', textAlign: 'center' }}>
-            <div style={{ fontSize: 36, fontWeight: 800, color: 'white', letterSpacing: '-0.04em', marginBottom: 12, lineHeight: 1.15 }}>
-              Auditez votre tracking<br />
-              <span style={{ background: 'linear-gradient(135deg,#818cf8,#c084fc)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>en 60 secondes</span>
+      {/* ── HERO / URL INPUT ───────────────────────────────────────────────── */}
+      {showHero && (
+        <div style={{ background: 'linear-gradient(180deg, #1a73e8 0%, #1558b0 100%)', padding: '64px 24px 80px' }}>
+          <div style={{ maxWidth: 680, margin: '0 auto', textAlign: 'center' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', background: 'rgba(255,255,255,.15)', borderRadius: 20, marginBottom: 20 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80' }} />
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,.9)', fontWeight: 500 }}>Diagnostic complet en 60 secondes</span>
             </div>
-            <div style={{ fontSize: 14, color: '#64748b', marginBottom: 32, lineHeight: 1.7 }}>
-              Scan complet : RGPD / Consent Mode v2, GA4, Google Ads Enhanced Conversions,<br />
-              Meta Advanced Matching, CAPI, parcours utilisateur et micro-signaux.
-            </div>
+            <h1 style={{ fontSize: 40, fontWeight: 700, color: 'white', letterSpacing: '-0.03em', marginBottom: 12, lineHeight: 1.2 }}>
+              Auditez votre tracking
+            </h1>
+            <p style={{ fontSize: 15, color: 'rgba(255,255,255,.75)', marginBottom: 36, lineHeight: 1.7, maxWidth: 520, margin: '0 auto 36px' }}>
+              RGPD · Consent Mode v2 · GA4 · Google Ads Enhanced Conversions · Meta CAPI · Advanced Matching
+            </p>
 
-            {/* URL Input */}
-            <div style={{ display: 'flex', gap: 8, background: 'white', borderRadius: 12, padding: 6, boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}>
-              <input value={url} onChange={e => setUrl(e.target.value)}
+            {/* Search bar */}
+            <div style={{ background: C.white, borderRadius: 12, padding: '6px 6px 6px 18px', boxShadow: '0 4px 24px rgba(0,0,0,.18)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <SearchIcon size={18} color={C.muted} />
+              <input
+                value={url}
+                onChange={e => setUrl(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && runAudit()}
-                placeholder="https://votre-site.com ou landing-page.com"
-                style={{ flex: 1, padding: '10px 14px', fontSize: 14, border: 'none', outline: 'none', color: '#0f172a', background: 'transparent' }}
+                placeholder="https://votre-site.com"
+                style={{ flex: 1, padding: '8px 4px', fontSize: 15, border: 'none', outline: 'none', color: C.text, background: 'transparent' }}
               />
-              <button onClick={runAudit} disabled={!url.trim()}
-                style={{ padding: '10px 24px', fontSize: 13, fontWeight: 800, background: url.trim() ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : '#e2e8f0', color: url.trim() ? 'white' : '#94a3b8', border: 'none', borderRadius: 8, cursor: url.trim() ? 'pointer' : 'not-allowed', transition: 'all .2s', whiteSpace: 'nowrap' }}>
-                Lancer l'audit →
+              <button
+                onClick={runAudit}
+                disabled={!url.trim()}
+                style={{ padding: '10px 24px', fontSize: 14, fontWeight: 600, background: url.trim() ? C.blue : '#e8eaed', color: url.trim() ? 'white' : C.muted, border: 'none', borderRadius: 8, cursor: url.trim() ? 'pointer' : 'not-allowed', transition: 'all .2s', whiteSpace: 'nowrap' }}>
+                Lancer l'audit
               </button>
             </div>
 
-            {/* Platform connection hint */}
-            <div style={{ marginTop: 20, fontSize: 11, color: '#475569' }}>
+            {/* Connection hint */}
+            <div style={{ marginTop: 18, fontSize: 12, color: 'rgba(255,255,255,.65)' }}>
               {!connections.google && !connections.meta ? (
-                <span>💡 Connectez <button onClick={connectGoogle} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>Google</button> et <button onClick={connectMeta} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>Meta</button> pour un audit enrichi avec données réelles de vos comptes</span>
+                <span>
+                  Connectez{' '}
+                  <button onClick={connectGoogle} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.9)', cursor: 'pointer', fontWeight: 600, fontSize: 12, textDecoration: 'underline' }}>Google</button>
+                  {' '}et{' '}
+                  <button onClick={connectMeta} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.9)', cursor: 'pointer', fontWeight: 600, fontSize: 12, textDecoration: 'underline' }}>Meta</button>
+                  {' '}pour un audit enrichi avec vos données réelles
+                </span>
               ) : (
-                <span style={{ color: '#22c55e' }}>✓ {connections.google ? 'Google connecté' : ''} {connections.meta ? '· Meta connecté' : ''} — audit enrichi activé</span>
+                <span style={{ color: '#86efac' }}>
+                  <CheckIcon size={12} color="#86efac" />
+                  {' '}{connections.google ? 'Google connecté' : ''}{connections.google && connections.meta ? ' · ' : ''}{connections.meta ? 'Meta connecté' : ''} — audit enrichi activé
+                </span>
               )}
             </div>
 
             {error && (
-              <div style={{ marginTop: 16, padding: '10px 14px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, fontSize: 12, color: '#991b1b', textAlign: 'left' }}>
-                ⚠ {error}
+              <div style={{ marginTop: 16, padding: '12px 16px', background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.2)', borderRadius: 8, fontSize: 13, color: 'white', textAlign: 'left', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <AlertTriangleIcon size={16} color="white" />
+                <span>{error}</span>
               </div>
             )}
           </div>
         </div>
-      ) : null}
+      )}
 
-      {/* ── SCANNING STATE ─────────────────────────────────────────────────── */}
-      {(phase === 'scanning' || phase === 'analyzing') && (
-        <div style={{ background: '#0f172a', padding: '48px 24px 56px' }}>
-          <div style={{ maxWidth: 600, margin: '0 auto', textAlign: 'center' }}>
-            <div style={{ width: 56, height: 56, border: '3px solid #1e293b', borderTop: '3px solid #6366f1', borderRadius: '50%', margin: '0 auto 20px', animation: 'spin 1s linear infinite' }} />
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 8 }}>
-              {phase === 'scanning' ? 'Scan en cours...' : 'Analyse IA en cours...'}
-            </div>
-            <div style={{ fontSize: 12, color: '#64748b' }}>{phaseMsg}</div>
-            <div style={{ fontSize: 12, color: '#475569', marginTop: 8 }}>{url}</div>
-          </div>
+      {/* ── LOADING STATE ──────────────────────────────────────────────────── */}
+      {isLoading && (
+        <div style={{ background: C.white, minHeight: 'calc(100vh - 64px)' }}>
+          <LoadingView phase={phase} phaseMsg={phaseMsg} url={url} />
         </div>
       )}
 
-      {/* ── REPORT ────────────────────────────────────────────────────────── */}
+      {/* ── RESULTS ────────────────────────────────────────────────────────── */}
       {phase === 'done' && report && (
-        <div>
-          {/* Score header */}
-          <div style={{ background: '#0f172a', padding: '20px 24px', borderBottom: '1px solid #1e293b' }}>
-            <div style={{ maxWidth: 900, margin: '0 auto' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                  <ScoreRing score={report.score.global} size={80} />
+        <div className="animate-in">
+          {/* Score banner */}
+          <div style={{ background: C.white, borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 24px 0' }}>
+              {/* Top row: score + stats + new audit button */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap', marginBottom: 20 }}>
+                {/* Global score */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                  <ScoreRing score={report.score.global} size={88} />
                   <div>
-                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 3 }}>Score global</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'white', maxWidth: 280, lineHeight: 1.4 }}>{report.aiSummary.headline}</div>
-                    <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>{report.aiSummary.estimated_data_loss}</div>
+                    <div style={{ fontSize: 11, fontWeight: 500, color: C.muted, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.06em' }}>Score global</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: C.text, maxWidth: 300, lineHeight: 1.4, marginBottom: 6 }}>{report.aiSummary.headline}</div>
+                    {report.aiSummary.estimated_data_loss && (
+                      <div style={{ fontSize: 12, color: C.red, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <AlertTriangleIcon size={13} color={C.red} />
+                        {report.aiSummary.estimated_data_loss}
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 12, marginLeft: 'auto', flexWrap: 'wrap', alignItems: 'center' }}>
-                  {[{n:okCount,c:'#22c55e',l:'OK'},{n:warnCount,c:'#f59e0b',l:'Warn'},{n:failCount,c:'#ef4444',l:'Fail'},{n:checks.filter(c=>c.status==='manual').length,c:'#818cf8',l:'Manuel'}].map((s,i)=>(
-                    <div key={i} style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 24, fontWeight: 800, color: s.c, lineHeight: 1 }}>{s.n}</div>
-                      <div style={{ fontSize: 9, color: '#475569' }}>{s.l}</div>
+
+                {/* Stat pills */}
+                <div style={{ display: 'flex', gap: 10, marginLeft: 'auto', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {[
+                    { n: okCount, color: C.green, bg: C.greenBg, label: 'Conformes' },
+                    { n: warnCount, color: '#b06000', bg: C.yellowBg, label: 'Attention' },
+                    { n: failCount, color: C.red, bg: C.redBg, label: 'Échecs' },
+                    { n: manualCount, color: C.purple, bg: C.purpleBg, label: 'Manuels' },
+                  ].map((s, i) => (
+                    <div key={i} style={{ padding: '8px 14px', background: s.bg, borderRadius: 8, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.n}</div>
+                      <div style={{ fontSize: 10, color: s.color, opacity: 0.8, marginTop: 2 }}>{s.label}</div>
                     </div>
                   ))}
-                  <button onClick={() => { setPhase('idle'); setReport(null) }} style={{ padding: '8px 14px', fontSize: 11, fontWeight: 700, background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', borderRadius: 8, cursor: 'pointer', marginLeft: 8 }}>
+                  <button
+                    onClick={() => { setPhase('idle'); setReport(null) }}
+                    style={{ padding: '8px 16px', fontSize: 13, fontWeight: 500, background: C.white, color: C.sub, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'pointer', marginLeft: 4 }}>
                     ← Nouvel audit
                   </button>
                 </div>
               </div>
 
               {/* AI insights */}
-              {report.aiSummary.priority_issues?.length > 0 && (
-                <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {report.aiSummary.priority_issues.slice(0, 2).map((issue, i) => (
-                    <div key={i} style={{ fontSize: 10, padding: '5px 10px', background: '#fee2e2', border: '0.5px solid #fca5a5', borderRadius: 6, color: '#991b1b', maxWidth: 280 }}>
-                      🚨 {issue}
+              {(report.aiSummary.priority_issues?.length > 0 || report.aiSummary.quick_wins?.length > 0) && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+                  {report.aiSummary.priority_issues?.slice(0, 2).map((issue, i) => (
+                    <div key={i} style={{ fontSize: 12, padding: '6px 12px', background: C.redBg, border: `1px solid #f5c6c2`, borderRadius: 20, color: C.red, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <AlertTriangleIcon size={12} color={C.red} /> {issue}
                     </div>
                   ))}
                   {report.aiSummary.quick_wins?.slice(0, 1).map((win, i) => (
-                    <div key={i} style={{ fontSize: 10, padding: '5px 10px', background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 6, color: '#166534', maxWidth: 280 }}>
-                      ⚡ {win}
+                    <div key={i} style={{ fontSize: 12, padding: '6px 12px', background: C.greenBg, border: `1px solid #a8d5b5`, borderRadius: 20, color: '#137333', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <CheckIcon size={12} color="#137333" /> {win}
                     </div>
                   ))}
                 </div>
               )}
 
               {/* Tabs */}
-              <div style={{ display: 'flex', gap: 0, marginTop: 16 }}>
-                {([['audit', 'Résultats d\'audit'], ['fixes', `Plan de correction (${failCount + warnCount})`], ['platforms', 'Plateformes connectées']] as const).map(([id, label]) => (
-                  <button key={id} onClick={() => setActiveTab(id)} style={{
-                    padding: '7px 16px', fontSize: 11, fontWeight: activeTab === id ? 700 : 500,
-                    color: activeTab === id ? 'white' : '#64748b', background: 'none', border: 'none',
-                    cursor: 'pointer', borderBottom: `2px solid ${activeTab === id ? '#6366f1' : 'transparent'}`, transition: 'all .15s',
-                  }}>
+              <div style={{ display: 'flex', gap: 0, borderBottom: 'none', marginTop: 4 }}>
+                {([
+                  ['audit', 'Résultats d\'audit', checks.length],
+                  ['fixes', 'Plan de correction', failCount + warnCount],
+                  ['platforms', 'Plateformes', null],
+                ] as const).map(([id, label, count]) => (
+                  <button
+                    key={id}
+                    onClick={() => setActiveTab(id)}
+                    style={{
+                      padding: '10px 18px', fontSize: 13, fontWeight: activeTab === id ? 600 : 400,
+                      color: activeTab === id ? C.blue : C.sub, background: 'none', border: 'none',
+                      cursor: 'pointer', borderBottom: `3px solid ${activeTab === id ? C.blue : 'transparent'}`,
+                      transition: 'all .15s', display: 'flex', alignItems: 'center', gap: 7,
+                    }}>
                     {label}
+                    {count !== null && count > 0 && (
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: '1px 7px', borderRadius: 10, background: activeTab === id ? C.blue : C.bg, color: activeTab === id ? 'white' : C.sub }}>
+                        {count}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
             </div>
           </div>
 
-          {/* Body */}
-          <div style={{ maxWidth: 900, margin: '0 auto', padding: '16px 24px' }}>
+          {/* Main content */}
+          <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 24px' }}>
 
-            {/* Score breakdown */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 10, marginBottom: 16 }}>
+            {/* Score breakdown cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, marginBottom: 24 }}>
               {[
-                { label: 'Consentement', score: report.score.consent, icon: '🔒' },
-                { label: 'Mesure GA4', score: report.score.measurement, icon: '📊' },
-                { label: 'Conversions', score: report.score.conversion, icon: '⚡' },
-                { label: 'Confidentialité', score: report.score.privacy, icon: '🛡️' },
-              ].map((s, i) => (
-                <div key={i} style={{ background: 'white', border: '0.5px solid #e2e8f0', borderRadius: 10, padding: '12px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 16, marginBottom: 6 }}>{s.icon}</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: s.score >= 75 ? '#22c55e' : s.score >= 50 ? '#f59e0b' : '#ef4444', marginBottom: 3 }}>{s.score}</div>
-                  <div style={{ fontSize: 10, color: '#64748b' }}>{s.label}</div>
-                </div>
-              ))}
+                { label: 'Consentement', score: report.score.consent, icon: <ShieldIcon size={18} color={C.blue} /> },
+                { label: 'Mesure GA4', score: report.score.measurement, icon: <ChartIcon size={18} color={C.blue} /> },
+                { label: 'Conversions', score: report.score.conversion, icon: <AdsIcon size={18} color={C.blue} /> },
+                { label: 'Confidentialité', score: report.score.privacy, icon: <ShieldIcon size={18} color={C.blue} /> },
+              ].map((s, i) => {
+                const color = s.score >= 75 ? C.green : s.score >= 50 ? C.yellow : C.red
+                return (
+                  <div key={i} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <span style={{ fontSize: 12, color: C.sub, fontWeight: 500 }}>{s.label}</span>
+                      {s.icon}
+                    </div>
+                    <div style={{ fontSize: 28, fontWeight: 700, color, lineHeight: 1, marginBottom: 8 }}>{s.score}</div>
+                    <div style={{ height: 4, background: '#e8eaed', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${s.score}%`, background: color, borderRadius: 2, transition: 'width 1s ease' }} />
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
             {/* ─ AUDIT TAB ─ */}
-            {activeTab === 'audit' && categories.map(cat => {
-              const catChecks = checks.filter(c => c.category === cat)
-              const catFail = catChecks.filter(c => c.status === 'fail').length
-              const catOk = catChecks.filter(c => c.status === 'ok').length
-              const isOpen = openSections[cat] !== false
-              return (
-                <div key={cat} style={{ background: 'white', border: `0.5px solid ${catFail > 0 ? '#fca5a5' : '#e2e8f0'}`, borderRadius: 12, marginBottom: 10, overflow: 'hidden' }}>
-                  <div onClick={() => setOpenSections(prev => ({ ...prev, [cat]: !prev[cat] }))} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 16px', cursor: 'pointer', borderBottom: isOpen ? '0.5px solid #f1f5f9' : 'none' }}>
-                    <span style={{ fontSize: 15 }}>{CAT_LABELS[cat]?.split(' ')[0]}</span>
-                    <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: '#0f172a' }}>{CAT_LABELS[cat]?.slice(3)}</span>
-                    {catFail > 0 && <span style={{ fontSize: 10, fontWeight: 700, background: '#fee2e2', color: '#991b1b', padding: '1px 8px', borderRadius: 99 }}>{catFail} échec{catFail > 1 ? 's' : ''}</span>}
-                    <span style={{ fontSize: 11, fontWeight: 600, background: catOk === catChecks.length ? '#dcfce7' : '#f1f5f9', color: catOk === catChecks.length ? '#166534' : '#64748b', padding: '1px 9px', borderRadius: 99 }}>
-                      {catOk}/{catChecks.length}
-                    </span>
-                    <span style={{ fontSize: 10, color: '#cbd5e1' }}>{isOpen ? '▲' : '▼'}</span>
-                  </div>
-                  {isOpen && catChecks.map(check => (
-                    <CheckRow key={check.id} check={check} onOpen={c => setModalCheck(c)} />
-                  ))}
-                </div>
-              )
-            })}
+            {activeTab === 'audit' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {categories.map(cat => {
+                  const catChecks = checks.filter(c => c.category === cat)
+                  const catFail = catChecks.filter(c => c.status === 'fail').length
+                  const catOk = catChecks.filter(c => c.status === 'ok').length
+                  const isOpen = openSections[cat] !== false
+                  const meta = CAT_META[cat]
+                  return (
+                    <div key={cat} style={{ background: C.white, border: `1px solid ${catFail > 0 ? '#f5c6c2' : C.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+                      <div
+                        onClick={() => setOpenSections(prev => ({ ...prev, [cat]: !prev[cat] }))}
+                        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px', cursor: 'pointer', borderBottom: isOpen ? `1px solid ${C.border}` : 'none', background: C.white }}>
+                        <div style={{ width: 32, height: 32, borderRadius: 8, background: C.blueBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          {meta?.icon ? <span style={{ color: C.blue }}>{meta.icon}</span> : <span style={{ color: C.blue }}><TagIcon size={16} color={C.blue} /></span>}
+                        </div>
+                        <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: C.text }}>{meta?.label || cat}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {catFail > 0 && (
+                            <span style={{ fontSize: 11, fontWeight: 600, background: C.redBg, color: C.red, padding: '2px 10px', borderRadius: 20 }}>
+                              {catFail} échec{catFail > 1 ? 's' : ''}
+                            </span>
+                          )}
+                          <span style={{ fontSize: 11, fontWeight: 600, background: catOk === catChecks.length ? C.greenBg : C.bg, color: catOk === catChecks.length ? '#137333' : C.sub, padding: '2px 10px', borderRadius: 20 }}>
+                            {catOk}/{catChecks.length}
+                          </span>
+                          {isOpen ? <ChevronUpIcon size={16} color={C.sub} /> : <ChevronDownIcon size={16} color={C.sub} />}
+                        </div>
+                      </div>
+                      {isOpen && catChecks.map(check => (
+                        <CheckRow key={check.id} check={check} onOpen={c => setModalCheck(c)} />
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
             {/* ─ FIXES TAB ─ */}
             {activeTab === 'fixes' && <FixPlan checks={checks} />}
 
             {/* ─ PLATFORMS TAB ─ */}
             {activeTab === 'platforms' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 14 }}>
-                {/* Google */}
-                <div style={{ background: 'white', border: '0.5px solid #e2e8f0', borderRadius: 12, padding: '18px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                    <div style={{ fontSize: 24 }}>🔵</div>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Google</div>
-                      <div style={{ fontSize: 10, color: '#64748b' }}>GA4 + Google Ads</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+                {/* Google card */}
+                <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                    <div style={{ width: 40, height: 40, background: C.blueBg, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <GoogleLogoIcon size={22} />
                     </div>
-                    <div style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: connections.google ? '#22c55e' : '#cbd5e1' }} />
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Google</div>
+                      <div style={{ fontSize: 11, color: C.sub }}>GA4 · Google Ads · GTM</div>
+                    </div>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 500, color: connections.google ? '#137333' : C.muted }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: connections.google ? C.green : '#bdc1c6' }} />
+                      {connections.google ? 'Connecté' : 'Non connecté'}
+                    </div>
                   </div>
                   {connections.google ? (
-                    <div>
-                      {connections.google.propertyName && <div style={{ fontSize: 11, color: '#334155', marginBottom: 4 }}>📊 GA4 : {connections.google.propertyName}</div>}
-                      {connections.google.measurementId && <div style={{ fontSize: 11, color: '#334155', marginBottom: 8 }}>ID : {connections.google.measurementId}</div>}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {connections.google.propertyName && (
+                        <div style={{ padding: '8px 12px', background: C.bg, borderRadius: 8, fontSize: 12, color: C.text, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <ChartIcon size={14} color={C.blue} />
+                          <span>GA4 : <strong>{connections.google.propertyName}</strong></span>
+                        </div>
+                      )}
+                      {connections.google.measurementId && (
+                        <div style={{ padding: '8px 12px', background: C.bg, borderRadius: 8, fontSize: 12, color: C.sub, fontFamily: 'Roboto Mono, monospace' }}>
+                          {connections.google.measurementId}
+                        </div>
+                      )}
                       {report.platformData?.ga4 && (
-                        <>
-                          <div style={{ fontSize: 11, color: '#166534', background: '#f0fdf4', padding: '5px 8px', borderRadius: 6, marginBottom: 4 }}>✓ {report.platformData.ga4.conversionEvents.length} conversions configurées</div>
-                          <div style={{ fontSize: 11, color: '#64748b' }}>Events récents : {report.platformData.ga4.recentEvents?.slice(0, 3).map(e => e.name).join(', ')}</div>
-                        </>
+                        <div style={{ padding: '8px 12px', background: C.greenBg, borderRadius: 8, fontSize: 12, color: '#137333', display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <CheckIcon size={12} color="#137333" />
+                          {report.platformData.ga4.conversionEvents.length} conversions configurées
+                        </div>
                       )}
                     </div>
                   ) : (
-                    <button onClick={connectGoogle} style={{ width: '100%', padding: '10px', fontSize: 12, fontWeight: 700, background: '#f0f4ff', color: '#4f46e5', border: '1px solid #c7d7fe', borderRadius: 8, cursor: 'pointer' }}>
-                      Connecter Google →
+                    <button onClick={connectGoogle} style={{ width: '100%', padding: '10px', fontSize: 13, fontWeight: 500, background: C.blueBg, color: C.blue, border: `1px solid #c6d9fc`, borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                      <GoogleLogoIcon size={16} /> Connecter Google
                     </button>
                   )}
                 </div>
 
-                {/* Meta */}
-                <div style={{ background: 'white', border: '0.5px solid #e2e8f0', borderRadius: 12, padding: '18px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                    <div style={{ fontSize: 24 }}>🔷</div>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Meta</div>
-                      <div style={{ fontSize: 10, color: '#64748b' }}>Pixel + CAPI + Advanced Matching</div>
+                {/* Meta card */}
+                <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                    <div style={{ width: 40, height: 40, background: C.purpleBg, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <MetaLogoIcon size={22} />
                     </div>
-                    <div style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: connections.meta ? '#22c55e' : '#cbd5e1' }} />
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Meta</div>
+                      <div style={{ fontSize: 11, color: C.sub }}>Pixel · CAPI · Advanced Matching</div>
+                    </div>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 500, color: connections.meta ? '#137333' : C.muted }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: connections.meta ? C.green : '#bdc1c6' }} />
+                      {connections.meta ? 'Connecté' : 'Non connecté'}
+                    </div>
                   </div>
                   {connections.meta ? (
-                    <div>
-                      {connections.meta.pixelName && <div style={{ fontSize: 11, color: '#334155', marginBottom: 8 }}>Pixel : {connections.meta.pixelName}</div>}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {connections.meta.pixelName && (
+                        <div style={{ padding: '8px 12px', background: C.bg, borderRadius: 8, fontSize: 12, color: C.text }}>
+                          Pixel : <strong>{connections.meta.pixelName}</strong>
+                        </div>
+                      )}
                       {report.platformData?.meta && (
                         <>
-                          <div style={{ fontSize: 11, color: report.platformData.meta.advancedMatchingEnabled ? '#166534' : '#991b1b', background: report.platformData.meta.advancedMatchingEnabled ? '#f0fdf4' : '#fee2e2', padding: '5px 8px', borderRadius: 6, marginBottom: 4 }}>
-                            Advanced Matching : {report.platformData.meta.advancedMatchingEnabled ? '✓ Actif' : '✗ Inactif'}
+                          <div style={{ padding: '8px 12px', background: report.platformData.meta.advancedMatchingEnabled ? C.greenBg : C.redBg, borderRadius: 8, fontSize: 12, color: report.platformData.meta.advancedMatchingEnabled ? '#137333' : C.red, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {report.platformData.meta.advancedMatchingEnabled ? <CheckIcon size={12} color="#137333" /> : <XIcon size={12} color={C.red} />}
+                            Advanced Matching : {report.platformData.meta.advancedMatchingEnabled ? 'Actif' : 'Inactif'}
                           </div>
-                          <div style={{ fontSize: 11, color: report.platformData.meta.capiConnected ? '#166534' : '#991b1b', background: report.platformData.meta.capiConnected ? '#f0fdf4' : '#fee2e2', padding: '5px 8px', borderRadius: 6 }}>
-                            CAPI : {report.platformData.meta.capiConnected ? '✓ Connectée' : '✗ Non connectée'}
+                          <div style={{ padding: '8px 12px', background: report.platformData.meta.capiConnected ? C.greenBg : C.redBg, borderRadius: 8, fontSize: 12, color: report.platformData.meta.capiConnected ? '#137333' : C.red, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {report.platformData.meta.capiConnected ? <CheckIcon size={12} color="#137333" /> : <XIcon size={12} color={C.red} />}
+                            CAPI : {report.platformData.meta.capiConnected ? 'Connectée' : 'Non connectée'}
                           </div>
-                          {report.platformData.meta.matchRate && <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>Match rate : {report.platformData.meta.matchRate}%</div>}
+                          {report.platformData.meta.matchRate && (
+                            <div style={{ padding: '8px 12px', background: C.bg, borderRadius: 8, fontSize: 12, color: C.sub }}>
+                              Match rate : <strong style={{ color: C.text }}>{report.platformData.meta.matchRate}%</strong>
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
                   ) : (
-                    <button onClick={connectMeta} style={{ width: '100%', padding: '10px', fontSize: 12, fontWeight: 700, background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: 8, cursor: 'pointer' }}>
-                      Connecter Meta →
+                    <button onClick={connectMeta} style={{ width: '100%', padding: '10px', fontSize: 13, fontWeight: 500, background: C.purpleBg, color: C.purple, border: `1px solid #d4adfd`, borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                      <MetaLogoIcon size={16} /> Connecter Meta
                     </button>
                   )}
                 </div>
 
                 {/* Coming soon */}
                 {['TikTok Ads', 'LinkedIn Ads'].map(name => (
-                  <div key={name} style={{ background: '#fafafa', border: '0.5px dashed #e2e8f0', borderRadius: 12, padding: '18px', opacity: 0.6 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>{name}</div>
-                    <div style={{ fontSize: 10, color: '#94a3b8' }}>Prochainement disponible</div>
+                  <div key={name} style={{ background: C.bg, border: `1px dashed ${C.border}`, borderRadius: 10, padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 140, gap: 6, opacity: 0.6 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: C.muted }}>{name}</div>
+                    <div style={{ fontSize: 11, color: C.muted, padding: '2px 10px', background: C.white, border: `1px solid ${C.border}`, borderRadius: 20 }}>Prochainement</div>
                   </div>
                 ))}
               </div>
@@ -729,10 +988,12 @@ export default function Home() {
 
       {/* ── MODAL ─────────────────────────────────────────────────────────── */}
       {modalCheck && (
-        <CheckModal check={modalCheck} onClose={() => setModalCheck(null)} onGoFix={() => { setActiveTab('fixes'); setModalCheck(null) }} />
+        <CheckModal
+          check={modalCheck}
+          onClose={() => setModalCheck(null)}
+          onGoFix={() => { setActiveTab('fixes'); setModalCheck(null) }}
+        />
       )}
-
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}input:focus{outline:none}button:active{transform:scale(.98)}`}</style>
     </div>
   )
 }
