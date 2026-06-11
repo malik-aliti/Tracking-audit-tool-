@@ -31,7 +31,7 @@ export async function scanUrl(url: string): Promise<ScanRawData> {
     const u = req.url()
     let type: NetworkRequest['type'] = 'other'
     if (u.includes('google-analytics.com') || u.includes('/g/collect')) type = 'ga4'
-    else if (u.includes('googletagmanager.com')) type = 'gtm'
+    else if (u.includes('googletagmanager.com') || (u.includes('/gtm.js') && !u.includes('google'))) type = 'gtm'
     else if (u.includes('facebook.com/tr') || u.includes('connect.facebook.net')) type = 'meta'
     else if (u.includes('googleads') || u.includes('pagead')) type = 'google_ads'
     else if (u.includes('cookieyes') || u.includes('onetrust') || u.includes('didomi') || u.includes('axeptio') || u.includes('cookiebot')) type = 'cmp'
@@ -62,6 +62,15 @@ export async function scanUrl(url: string): Promise<ScanRawData> {
       ? Object.keys(w.google_tag_manager).filter((k: string) =>
           k.startsWith('GTM-') || k.startsWith('G-') || k.startsWith('AW-'))
       : []
+
+    // Detect GTM script URL (custom domain = sGTM proxy)
+    let gtmScriptUrl: string | undefined
+    document.querySelectorAll('script[src]').forEach((s: any) => {
+      const src: string = s.src || ''
+      if (src.includes('gtm.js') || src.includes('googletagmanager.com')) {
+        gtmScriptUrl = src.slice(0, 200)
+      }
+    })
 
     const consentDefault = dl.find((e: any) => Array.isArray(e) && e[0] === 'consent' && e[1] === 'default')
     const consentUpdate  = dl.find((e: any) => Array.isArray(e) && e[0] === 'consent' && e[1] === 'update')
@@ -107,6 +116,7 @@ export async function scanUrl(url: string): Promise<ScanRawData> {
       finalUrl: window.location.href,
       hasGTM: !!(w.google_tag_manager),
       gtmContainers,
+      gtmScriptUrl,
       ga4Ids: gtmContainers.filter((k: string) => k.startsWith('G-')),
       googleAdsIds: gtmContainers.filter((k: string) => k.startsWith('AW-')),
       hasGtag: typeof w.gtag === 'function',
@@ -151,6 +161,7 @@ export async function scanUrl(url: string): Promise<ScanRawData> {
     timestamp: new Date().toISOString(),
     hasGTM: extracted.hasGTM,
     gtmContainers: extracted.gtmContainers,
+    gtmScriptUrl: extracted.gtmScriptUrl,
     ga4Ids: extracted.ga4Ids,
     googleAdsIds: extracted.googleAdsIds,
     hasGtag: extracted.hasGtag,
@@ -159,7 +170,8 @@ export async function scanUrl(url: string): Promise<ScanRawData> {
     consentUpdate: extracted.consentUpdate,
     metaPixelIds: extracted.metaPixelIds,
     fbqEvents: extracted.fbqEvents,
-    hasCAPI: networkRequests.some(r => r.type === 'meta' && r.url.includes('api_version')),
+    // CAPI is server-to-server — can't be detected from browser. Field kept for compatibility.
+    hasCAPI: false,
     cmpDetected: extracted.cmpDetected,
     hasTCF: extracted.hasTCF,
     cookieBannerVisible: extracted.cookieBannerVisible,

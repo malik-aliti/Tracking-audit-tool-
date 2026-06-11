@@ -14,7 +14,7 @@ export interface CheckResult {
 }
 
 export type CheckCategory =
-  | 'consent' | 'tag_base' | 'ga4' | 'google_ads' | 'meta' | 'user_journey' | 'performance' | 'qa'
+  | 'consent' | 'tag_base' | 'ga4' | 'google_ads' | 'meta' | 'server_side' | 'user_journey' | 'performance' | 'qa'
 
 export interface ScanRawData {
   url: string
@@ -23,6 +23,7 @@ export interface ScanRawData {
   timestamp: string
   hasGTM: boolean
   gtmContainers: string[]
+  gtmScriptUrl?: string
   ga4Ids: string[]
   googleAdsIds: string[]
   hasGtag: boolean
@@ -114,5 +115,6 @@ export interface MetaData {
   pixelId: string; pixelName: string
   advancedMatchingEnabled: boolean; capiConnected: boolean
   matchRate?: number; eventStats: MetaEventStat[]; recentEvents: string[]; qualityScore?: number
+  serverEventsCount?: number; deduplicationEnabled?: boolean
 }
 export interface MetaEventStat { name: string; count: number; matchRate?: number }

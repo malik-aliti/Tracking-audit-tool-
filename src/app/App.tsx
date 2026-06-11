@@ -63,6 +63,7 @@ const CAT_META: Record<string, { label: string; color: string }> = {
   ga4:          { label: 'GA4 & Analytics',       color: C.green  },
   google_ads:   { label: 'Google Ads',            color: '#5B21B6'},
   meta:         { label: 'Meta',                  color: C.blue   },
+  server_side:  { label: 'Tracking Server-Side',  color: '#059669'},
   qa:           { label: 'Qualité & QA',          color: C.gray500},
   user_journey: { label: 'Parcours utilisateur',  color: C.purple },
   performance:  { label: 'Performance',           color: C.yellow },

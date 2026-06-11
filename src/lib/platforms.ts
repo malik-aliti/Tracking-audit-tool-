@@ -157,14 +157,39 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
     ;(bizData.data || []).forEach((biz: any) => { if (biz.owned_pixels?.data) pixels.push(...biz.owned_pixels.data) })
     if (!pixels.length) return null
     const pixel = pixelId ? pixels.find(p => p.id === pixelId) || pixels[0] : pixels[0]
+
+    // Check CAPI: server_access_token presence = CAPI configured
+    let capiConnected = false
+    let serverEventsCount: number | undefined
+    let deduplicationEnabled: boolean | undefined
+    try {
+      const pixelRes = await fetch(`https://graph.facebook.com/v20.0/${pixel.id}?fields=id,server_access_token&access_token=${accessToken}`)
+      if (pixelRes.ok) {
+        const pixelDetail = await pixelRes.json()
+        capiConnected = !!(pixelDetail.server_access_token)
+      }
+    } catch {}
+
+    // Event stats (7 days)
     const eventsRes = await fetch(`https://graph.facebook.com/v20.0/${pixel.id}/stats?aggregation=event&start_time=${Math.floor(Date.now()/1000)-7*24*3600}&end_time=${Math.floor(Date.now()/1000)}&access_token=${accessToken}`)
     const eventsData = eventsRes.ok ? await eventsRes.json() : { data: [] }
     const eventStats = (eventsData.data || []).map((e: any) => ({ name: e.event || '', count: e.count || 0, matchRate: e.match_rate_approx }))
+
+    // Match rate from event stats (average across events with match rate data)
+    const statsWithRate = eventStats.filter((e: any) => e.matchRate !== undefined && e.matchRate !== null)
+    const matchRate = statsWithRate.length > 0
+      ? Math.round(statsWithRate.reduce((sum: number, e: any) => sum + e.matchRate, 0) / statsWithRate.length)
+      : undefined
+
+    // Check deduplication: look for event_id in recent Meta pixel requests (browser side)
+    // This is set in analyzer via network request inspection
+
     return {
       pixelId: pixel.id, pixelName: pixel.name || `Pixel ${pixel.id}`,
       advancedMatchingEnabled: !!(pixel.advanced_matching_fields?.length > 0),
-      capiConnected: false, matchRate: undefined, eventStats,
+      capiConnected, matchRate, eventStats,
       recentEvents: eventStats.map((e: any) => e.name), qualityScore: undefined,
+      serverEventsCount, deduplicationEnabled,
     }
   } catch (err) { console.error('Meta error:', err); return null }
 }

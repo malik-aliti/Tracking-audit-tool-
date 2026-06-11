@@ -475,17 +475,100 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
           ['Meta Events Manager : pixel > Correspondance avancée > Activer'], 'high'))
   }
 
-  // m2 — CAPI (scan réseau / données plateforme)
+  // m2 — CAPI (source primaire = API Meta si connectée)
   if (raw.metaPixelIds.length > 0 || (hasGTM && gtmData!.checks.hasMetaPixelTag)) {
-    results.push(raw.hasCAPI
-      ? ok('m2', 'CAPI connectée', 'meta', ['Meta', 'CAPI'], 'Conversions API active.', [], [])
-      : fail('m2', 'CAPI non connectée', 'meta', ['Meta', 'CAPI'],
-          'Impact : 20-40% de conversions perdues (iOS/AdBlockers).',
-          ['Aucune requête CAPI détectée'],
-          ['Meta Events Manager : pixel > Paramètres > Conversions API > Configurer'], 'high'))
+    if (platform?.meta) {
+      // Meta API connectée : source authoritative
+      results.push(platform.meta.capiConnected
+        ? ok('m2', 'CAPI connectée (vérifié via API Meta)', 'meta', ['Meta', 'CAPI'],
+            'Conversions API active — server access token configuré.',
+            [`Pixel : ${platform.meta.pixelName}`], [])
+        : fail('m2', 'CAPI non configurée (vérifié via API Meta)', 'meta', ['Meta', 'CAPI'],
+            `Pixel ${platform.meta.pixelId} : aucun server access token. 20-40% de conversions perdues (iOS/AdBlockers).`,
+            ['Aucun server access token sur le pixel Meta'],
+            ['Meta Events Manager : pixel > Paramètres > Conversions API > Configurer',
+             'Ou : Utiliser un partenaire d\'intégration (Shopify, WooCommerce...)'], 'high'))
+    } else {
+      // Meta non connectée — vérification manuelle nécessaire (CAPI est server-side, invisible du navigateur)
+      results.push(manual('m2', 'CAPI — connecter Meta pour vérifier', 'meta', ['Meta', 'CAPI'],
+        'La CAPI est server-to-server : impossible à détecter depuis le navigateur. Connecter Meta pour audit automatique.',
+        ['La CAPI envoie des hits depuis votre serveur, pas depuis le navigateur du visiteur'],
+        ['Connecter Meta (bouton Plateformes) pour vérifier automatiquement',
+         'Ou vérifier manuellement : Meta Events Manager > pixel > Paramètres > Conversions API']))
+    }
   }
 
-  // ─── 6. GTM QA (uniquement quand GTM connecté) ───────────────────────────────
+  // ─── 6. SERVER-SIDE TRACKING ─────────────────────────────────────────────────
+
+  // ss1 — sGTM (server-side GTM) : détection via URL du script GTM
+  {
+    const gtmUrl = raw.gtmScriptUrl || ''
+    const isCustomDomain = gtmUrl && !gtmUrl.includes('googletagmanager.com') && gtmUrl.includes('gtm.js')
+    const isStandardDomain = gtmUrl && gtmUrl.includes('googletagmanager.com')
+
+    if (isCustomDomain) {
+      results.push(ok('ss1', `sGTM détecté — domaine personnalisé`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
+        `Script GTM chargé depuis un domaine custom : ${new URL(gtmUrl).hostname}`,
+        [`URL : ${gtmUrl}`, 'First-party tracking actif — cookies 1st party durables'],
+        ['Vérifier que le container sGTM transfère bien les tags vers GA4, Meta, Google Ads']))
+    } else if (isStandardDomain) {
+      results.push(warn('ss1', 'GTM standard — pas de sGTM détecté', 'server_side', ['GTM', 'Server-Side'],
+        'GTM chargé depuis googletagmanager.com. Un server-side container améliore la durabilité des cookies et la précision de mesure.',
+        ['Script chargé depuis googletagmanager.com'],
+        ['Envisager Google Cloud Run ou Stape.io pour déployer un container sGTM',
+         'Avantages : cookies 1st party durables (ITP), meilleure déduplication CAPI'], 'low'))
+    } else if (raw.hasGTM) {
+      results.push(warn('ss1', 'GTM présent — URL script non captée', 'server_side', ['GTM', 'Server-Side'],
+        'GTM actif mais URL du script non identifiée. Vérifier si un proxy sGTM est en place.',
+        [], ['Vérifier dans le code source : l\'URL du script GTM'], 'low'))
+    }
+  }
+
+  // ss2 — Déduplication CAPI / Pixel (event_id)
+  if (platform?.meta?.capiConnected || (hasGTM && gtmData!.checks.hasMetaPixelTag)) {
+    const metaHits = raw.networkRequests.filter(r => r.type === 'meta')
+    const hasEventId = metaHits.some(r => r.params?.event_id || r.params?.eid)
+    if (platform?.meta?.capiConnected) {
+      results.push(hasEventId
+        ? ok('ss2', 'Déduplication CAPI configurée (event_id détecté)', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
+            'Paramètre event_id présent dans les hits Pixel — déduplication browser/serveur active.',
+            ['event_id transmis dans les requêtes facebook.com/tr'],
+            ['Vérifier que le même event_id est envoyé côté serveur pour chaque événement'])
+        : fail('ss2', 'Déduplication CAPI manquante (event_id absent)', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
+            'CAPI configurée mais event_id absent dans les hits Pixel — risque de double comptage.',
+            ['Sans event_id identique browser+serveur, Meta comptera 2x les événements'],
+            ['Ajouter event_id dans le tag Pixel GTM (paramètre "Event ID")',
+             'Utiliser la même valeur dans l\'appel CAPI côté serveur'], 'high'))
+    } else {
+      results.push(manual('ss2', 'Déduplication CAPI — CAPI non connectée', 'server_side', ['Meta', 'CAPI', 'Déduplication'],
+        'Connecter Meta et configurer la CAPI pour activer la déduplication.',
+        [], ['Configurer la CAPI puis ajouter event_id au tag Pixel GTM']))
+    }
+  }
+
+  // ss3 — Match rate Meta (si Meta connectée)
+  if (platform?.meta?.matchRate !== undefined) {
+    const rate = platform.meta.matchRate
+    if (rate >= 60) {
+      results.push(ok('ss3', `Match rate Meta : ${rate}%`, 'server_side', ['Meta', 'Match Rate'],
+        `Taux de correspondance ${rate}% — excellent (objectif >60%).`,
+        [`Match rate actuel : ${rate}%`], []))
+    } else if (rate >= 40) {
+      results.push(warn('ss3', `Match rate Meta : ${rate}% — à améliorer`, 'server_side', ['Meta', 'Match Rate'],
+        `Match rate ${rate}% (objectif >60%). Ajouter plus de paramètres d\'identification.`,
+        [`Actuel : ${rate}%`, 'Objectif : >60%'],
+        ['Ajouter email hashé, téléphone, prénom/nom dans Advanced Matching',
+         'Si CAPI active : enrichir les événements serveur avec user_data'], 'medium'))
+    } else {
+      results.push(fail('ss3', `Match rate Meta : ${rate}% — critique`, 'server_side', ['Meta', 'Match Rate'],
+        `Match rate ${rate}% (critique, <40%). Les audiences et l\'optimisation Meta sont fortement dégradées.`,
+        [`Actuel : ${rate}%`, 'Impact : retargeting et lookalike audiences peu précis'],
+        ['Activer Advanced Matching avec email et téléphone au minimum',
+         'Configurer la CAPI pour envoyer user_data côté serveur'], 'high'))
+    }
+  }
+
+  // ─── 7. GTM QA (uniquement quand GTM connecté) ───────────────────────────────
   if (hasGTM) {
     const c = gtmData!.checks
 
