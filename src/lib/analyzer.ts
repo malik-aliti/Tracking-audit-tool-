@@ -500,34 +500,44 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
 
   // ─── 6. SERVER-SIDE TRACKING ─────────────────────────────────────────────────
 
-  // ss1 — sGTM : SOURCE = GTMChecks.hasServerContainer (calculé depuis usageContext API)
-  {
-    const gtmUrl = raw.gtmScriptUrl || ''
-    const isCustomDomain = gtmUrl && !gtmUrl.includes('googletagmanager.com') && gtmUrl.includes('gtm.js')
+  // ss1 — sGTM : détection via scan de tous les containers GTM du compte
+  if (hasGTM) {
+    const scAnalysis = gtmData!.serverContainerAnalysis
+    if (scAnalysis.length > 0) {
+      const sc = scAnalysis[0]
+      const details: string[] = [
+        `Container : ${sc.name} (${sc.publicId})`,
+        `Tags configurés : ${sc.tagCount}`,
+        sc.serverDomain ? `Domaine : ${sc.serverDomain}` : '⚠ Aucun domaine custom configuré — cookies 1st party inactifs',
+        `GA4 Client : ${sc.hasGA4Client ? '✓ présent' : '✗ absent'}`,
+        `Meta CAPI : ${sc.hasMetaCapiTag ? '✓ présent' : '✗ absent'}`,
+        `Google Ads : ${sc.hasGoogleAdsTag ? '✓ présent' : '✗ absent'}`,
+      ]
+      const actions: string[] = []
+      if (!sc.serverDomain) actions.push('Configurer un domaine custom (Stape.io ou Cloud Run) pour activer les cookies 1st party 400j')
+      if (!sc.hasGA4Client) actions.push('sGTM : ajouter un tag GA4 Client pour transmettre les hits GA4')
+      if (!sc.hasMetaCapiTag) actions.push('sGTM : ajouter un tag Meta CAPI pour la déduplication navigateur/serveur')
+      if (actions.length === 0) actions.push('Configuration sGTM complète ✓ — vérifier les règles de déclenchement')
 
-    if (hasGTM && gtmData!.checks.hasServerContainer) {
-      const scs = gtmData!.checks.serverContainers
-      const sc = scs[0]
-      results.push(ok('ss1', `sGTM configuré — ${sc.publicId}`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
-        `Container server-side "${sc.name}" (${sc.publicId}) présent dans votre compte GTM.`,
-        scs.map(c => `Container serveur : ${c.name} (${c.publicId})`).concat([
-          isCustomDomain ? `Domaine custom : ${new URL(gtmUrl).hostname}` : 'Configurer un domaine custom pour les cookies 1st party',
-        ]),
-        ['Vérifier que le sGTM transfère bien les tags GA4, Meta, Google Ads',
-         isCustomDomain ? 'First-party cookies actifs ✓' : 'Stape.io ou Cloud Run pour activer le first-party tracking']))
-    } else if (isCustomDomain) {
-      results.push(ok('ss1', `sGTM — domaine custom détecté`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
-        `Script GTM chargé depuis un domaine custom : ${new URL(gtmUrl).hostname}`,
-        [`URL : ${gtmUrl}`, 'First-party tracking actif'],
-        ['Connecter Google pour identifier le container sGTM associé']))
-    } else if (raw.hasGTM || hasGTM) {
+      results.push(sc.configured
+        ? ok('ss1', `sGTM configuré — ${sc.publicId} (${sc.tagCount} tag${sc.tagCount > 1 ? 's' : ''})`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
+            `Container server-side "${sc.name}" détecté et configuré.`, details, actions)
+        : warn('ss1', `sGTM présent mais vide — ${sc.publicId}`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
+            `Container server-side "${sc.name}" trouvé mais aucun tag de forwarding configuré.`,
+            details,
+            ['sGTM : ajouter au minimum un GA4 Client et un tag HTTP Request ou CAPI'], 'high'))
+    } else {
       results.push(warn('ss1', 'GTM web uniquement — pas de container server-side', 'server_side', ['GTM', 'Server-Side'],
-        'Aucun container sGTM dans votre compte GTM. Le tracking web-only est limité par ITP et les bloqueurs.',
-        [hasGTM ? `${gtmData!.containers.length} container(s) analysés` : 'GTM détecté sans accès API'],
+        `Aucun container sGTM détecté dans votre compte GTM (${gtmData!.containers.length} container(s) analysés).`,
+        gtmData!.containers.map(c => `${c.name} — ${c.publicId} [${c.usageContext.join(', ') || 'web'}]`),
         ['GTM > Créer un container de type "Serveur"',
          'Déployer sur Stape.io (simplifié) ou Google Cloud Run',
          'Avantages : cookies 1st party 400j, meilleure déduplication CAPI, contournement AdBlockers'], 'low'))
     }
+  } else if (raw.hasGTM) {
+    results.push(warn('ss1', 'GTM détecté — connecter Google pour auditer le container sGTM', 'server_side', ['GTM', 'Server-Side'],
+      'Connecter Google pour détecter si un container server-side est configuré.',
+      [], ['Connecter Google via le bouton Plateformes'], 'low'))
   }
 
   // ss2 — Déduplication CAPI / Pixel (event_id)
