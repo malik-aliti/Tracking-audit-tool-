@@ -302,7 +302,10 @@ function FixPlan({ checks }: { checks: CheckResult[] }) {
   const [openIdx, setOpenIdx] = useState<number | null>(0)
   const [done, setDone] = useState<Set<string>>(new Set())
   const issues = checks.filter(c => c.status === 'fail' || c.status === 'warn')
-    .sort((a, b) => ({ critical: 0, high: 1, medium: 2, low: 3 } as any)[a.impact||'medium'] - ({ critical: 0, high: 1, medium: 2, low: 3 } as any)[b.impact||'medium'])
+    .sort((a, b) => {
+      const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+      return (order[a.impact || 'medium'] ?? 2) - (order[b.impact || 'medium'] ?? 2)
+    })
 
   if (!issues.length) return (
     <div style={{ textAlign: 'center', padding: '64px 20px' }}>
@@ -729,7 +732,7 @@ export default function Home() {
             {/* ─ AUDIT ─ */}
             {activeTab === 'audit' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {categories.map(cat => {
+                {categories.map((cat: string) => {
                   const cc = checks.filter(c => c.category === cat)
                   const fail = cc.filter(c => c.status === 'fail').length
                   const ok = cc.filter(c => c.status === 'ok').length

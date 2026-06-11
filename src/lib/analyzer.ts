@@ -17,68 +17,142 @@ function manual(id: string, label: string, category: CheckResult['category'], ta
 export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, gtmData?: GTMData): CheckResult[] {
   const results: CheckResult[] = []
 
-  // 1. CONSENT
+  // ─── 1. CONSENT ────────────────────────────────────────────────────────────
+  // Priorité : vérification via GTM quand disponible, sinon scan navigateur
+
+  // c1 — Présence CMP (scan navigateur, toujours disponible)
   if (raw.cmpDetected) {
-    results.push(ok('c1', `CMP : ${raw.cmpDetected}`, 'consent', ['Privacy','CMP'],
+    results.push(ok('c1', `CMP : ${raw.cmpDetected}`, 'consent', ['Privacy', 'CMP'],
       `${raw.cmpDetected} identifié et actif sur la page.`,
       [`CMP : ${raw.cmpDetected}`, `TCF v2.2 : ${raw.hasTCF ? 'actif' : 'non détecté'}`],
       ['Vérifier que la liste des cookies est à jour dans la bannière']))
   } else {
-    results.push(fail('c1', 'Aucune CMP détectée', 'consent', ['Privacy','CMP'],
+    results.push(fail('c1', 'Aucune CMP détectée', 'consent', ['Privacy', 'CMP'],
       'Aucun gestionnaire de consentement détecté. Non-conformité RGPD probable.',
       ['Aucune CMP reconnue dans le DOM'],
       ['Installer une CMP certifiée : CookieYes, Didomi, OneTrust, Axeptio, Cookiebot',
-       'Configurer avec Consent Mode v2'], 'critical'))
+       'Configurer le template CMP dans GTM avec Consent Mode v2'], 'critical'))
   }
 
+  // c2 — TCF v2.2 (scan navigateur)
   if (raw.hasTCF) {
-    results.push(ok('c2', 'TCF v2.2 actif', 'consent', ['Privacy','TCF'],
+    results.push(ok('c2', 'TCF v2.2 actif', 'consent', ['Privacy', 'TCF'],
       'Framework TCF v2.2 détecté.',
       ['window.__tcfapi disponible'],
       ['Vérifier que la liste des vendeurs TCF est à jour']))
   } else {
-    results.push(warn('c2', 'TCF v2.2 non détecté', 'consent', ['Privacy','TCF'],
+    results.push(warn('c2', 'TCF v2.2 non détecté', 'consent', ['Privacy', 'TCF'],
       `${raw.cmpDetected || 'Aucune CMP'} sans TCF v2.2.`,
       ['window.__tcfapi non défini'],
       ['Pour cible UE : activer TCF v2.2 dans votre CMP']))
   }
 
+  // c3 — Consent Mode v2 : SOURCE PRIMAIRE = GTM (template + signaux)
+  // Quand GTM n'est pas connecté, fallback sur scan navigateur
   const hasCD = !!raw.consentDefault
-  const allParams = raw.consentDefault &&
+  const allParams = !!(raw.consentDefault &&
     raw.consentDefault.analytics_storage !== undefined &&
     raw.consentDefault.ad_storage !== undefined &&
     raw.consentDefault.ad_user_data !== undefined &&
-    raw.consentDefault.ad_personalization !== undefined
+    raw.consentDefault.ad_personalization !== undefined)
+  const isAdvanced = !!(raw.consentDefault?.wait_for_update && raw.consentDefault.wait_for_update > 0)
 
-  if (hasCD && allParams) {
-    const isAdvanced = !!(raw.consentDefault?.wait_for_update && raw.consentDefault.wait_for_update > 0)
-    results.push(ok('c3', `Consent Mode v2 ${isAdvanced ? '(Mode Avancé)' : '(Mode Basique)'}`, 'consent', ['Google','Consent Mode'],
-      `4 paramètres définis${isAdvanced ? ` avec wait_for_update: ${raw.consentDefault?.wait_for_update}ms` : ''}.`,
-      [
-        `analytics_storage: ${raw.consentDefault?.analytics_storage}`,
-        `ad_storage: ${raw.consentDefault?.ad_storage}`,
-        `ad_user_data: ${raw.consentDefault?.ad_user_data}`,
-        `ad_personalization: ${raw.consentDefault?.ad_personalization}`,
-        isAdvanced ? 'Mode Avancé — modélisation des conversions activée' : 'Mode Basique — tags bloqués avant consentement',
-      ],
-      isAdvanced ? ['Mode Avancé optimal.'] : ['Passer au Mode Avancé pour activer la modélisation']))
-  } else if (hasCD) {
-    results.push(warn('c3', 'Consent Mode v2 — paramètres incomplets', 'consent', ['Google','Consent Mode'],
-      'consent/default présent mais les 4 paramètres ne sont pas tous définis.',
-      ['Paramètres requis : analytics_storage, ad_storage, ad_user_data, ad_personalization'],
-      ['Ajouter les paramètres manquants dans votre CMP ou template GTM'], 'high'))
+  if (gtmData) {
+    // GTM connecté : vérification authoritative via le conteneur
+    const gtmHasTemplate = gtmData.checks.hasConsentModeTemplate
+    const templateName   = gtmData.checks.consentModeTemplateName || ''
+    const templateType   = gtmData.checks.consentModeTemplateType || ''
+
+    if (gtmHasTemplate && hasCD && allParams) {
+      // ✓ Template dans GTM ET signaux confirmés côté navigateur
+      results.push(ok('c3', `Consent Mode v2 ${isAdvanced ? '(Mode Avancé)' : '(Mode Basique)'} — via GTM`, 'consent', ['GTM', 'Consent Mode'],
+        `Template "${templateName}" dans GTM${isAdvanced ? ` + wait_for_update: ${raw.consentDefault?.wait_for_update}ms` : ''}.`,
+        [
+          `Template GTM : ${templateName} (${templateType})`,
+          `analytics_storage: ${raw.consentDefault?.analytics_storage}`,
+          `ad_storage: ${raw.consentDefault?.ad_storage}`,
+          `ad_user_data: ${raw.consentDefault?.ad_user_data}`,
+          `ad_personalization: ${raw.consentDefault?.ad_personalization}`,
+          isAdvanced ? 'Mode Avancé — modélisation des conversions activée' : 'Mode Basique — tags bloqués avant consentement',
+        ],
+        isAdvanced ? ['Configuration optimale.'] : ['Passer au Mode Avancé : ajouter wait_for_update: 2000 dans le template']))
+    } else if (gtmHasTemplate && !hasCD) {
+      // Template présent dans GTM mais signaux absents côté navigateur → template mal configuré
+      results.push(warn('c3', `Template "${templateName}" dans GTM — signaux non détectés`, 'consent', ['GTM', 'Consent Mode'],
+        `Le template est dans GTM mais aucun signal consent/default détecté sur la page.`,
+        [
+          `Template GTM : ${templateName}`,
+          'Cause possible : séquence de chargement, déclencheur incorrect, ou mode prévisualisation',
+        ],
+        [
+          'Vérifier que le tag CMP se déclenche sur All Pages avec priorité haute (ex : 999)',
+          'GTM Preview : confirmer que le tag se déclenche avant gtm.js',
+          'Tester avec Tag Assistant : le template doit être le premier tag à se déclencher',
+        ], 'high'))
+    } else if (gtmHasTemplate && hasCD && !allParams) {
+      // Template dans GTM + signaux partiels
+      results.push(warn('c3', `Template "${templateName}" — 4 paramètres incomplets`, 'consent', ['GTM', 'Consent Mode'],
+        'Template dans GTM mais les 4 paramètres requis ne sont pas tous définis.',
+        ['Paramètres requis : analytics_storage, ad_storage, ad_user_data, ad_personalization'],
+        [`Dans le template GTM "${templateName}" : activer les 4 paramètres de consentement`], 'high'))
+    } else if (!gtmHasTemplate && hasCD && allParams) {
+      // Signaux présents côté nav mais aucun template GTM → implémentation hors GTM (acceptable mais déconseillé)
+      results.push(warn('c3', 'Consent Mode v2 actif — template CMP absent dans GTM', 'consent', ['GTM', 'Consent Mode'],
+        'Consent Mode v2 détecté côté navigateur, mais aucun template CMP dans le conteneur GTM.',
+        [`analytics_storage: ${raw.consentDefault?.analytics_storage}`, 'Implémentation probablement en dur dans le HTML ou via CMP externe'],
+        [
+          'Recommandé : installer le template officiel de votre CMP depuis la galerie GTM',
+          'Cela centralise la gestion du consentement et facilite les mises à jour RGPD',
+        ], 'medium'))
+    } else {
+      // Ni template GTM ni signaux navigateur → FAIL critique
+      results.push(fail('c3', 'Consent Mode v2 absent — aucun template GTM', 'consent', ['GTM', 'Consent Mode'],
+        `Aucun template CMP dans GTM et aucun signal consent/default. Tags Google non conformes.`,
+        [`${gtmData.tags.length} tags analysés dans GTM — aucun template Consent Mode trouvé`],
+        [
+          'GTM > Galerie de templates > chercher votre CMP (Cookiebot, Didomi, OneTrust, Axeptio, CookieYes)',
+          'Configurer le template avec les 4 paramètres : analytics_storage, ad_storage, ad_user_data, ad_personalization',
+          'Déclencheur : All Pages, Priorité : 999 (avant tous les autres tags)',
+          'Activer le Mode Avancé : wait_for_update: 2000',
+        ], 'critical'))
+    }
   } else {
-    results.push(fail('c3', 'Consent Mode v2 absent', 'consent', ['Google','Consent Mode'],
-      'Aucun signal consent/default. Tags Google non conformes.',
-      ['Aucun appel gtag("consent","default") détecté'],
-      ['Configurer via template CMP certifié dans GTM',
-       'Ou : gtag("consent","default",{analytics_storage:"denied",ad_storage:"denied",ad_user_data:"denied",ad_personalization:"denied",wait_for_update:2000})'], 'critical'))
+    // GTM non connecté : fallback vérification navigateur (comportement précédent)
+    if (hasCD && allParams) {
+      results.push(ok('c3', `Consent Mode v2 ${isAdvanced ? '(Mode Avancé)' : '(Mode Basique)'}`, 'consent', ['Google', 'Consent Mode'],
+        `4 paramètres définis${isAdvanced ? ` avec wait_for_update: ${raw.consentDefault?.wait_for_update}ms` : ''}.`,
+        [
+          `analytics_storage: ${raw.consentDefault?.analytics_storage}`,
+          `ad_storage: ${raw.consentDefault?.ad_storage}`,
+          `ad_user_data: ${raw.consentDefault?.ad_user_data}`,
+          `ad_personalization: ${raw.consentDefault?.ad_personalization}`,
+          isAdvanced ? 'Mode Avancé — modélisation des conversions activée' : 'Mode Basique — tags bloqués avant consentement',
+          '⚠ Connecter Google pour vérification via GTM',
+        ],
+        isAdvanced ? ['Mode Avancé optimal. Connecter Google pour vérification du template GTM.'] : ['Passer au Mode Avancé. Connecter Google pour vérification via GTM.']))
+    } else if (hasCD) {
+      results.push(warn('c3', 'Consent Mode v2 — paramètres incomplets', 'consent', ['Google', 'Consent Mode'],
+        'consent/default présent mais les 4 paramètres ne sont pas tous définis.',
+        ['Paramètres requis : analytics_storage, ad_storage, ad_user_data, ad_personalization'],
+        ['Connecter Google pour vérifier le template GTM', 'Ajouter les paramètres manquants dans le template CMP GTM'], 'high'))
+    } else {
+      results.push(fail('c3', 'Consent Mode v2 absent', 'consent', ['Google', 'Consent Mode'],
+        'Aucun signal consent/default. Connecter Google pour vérification via GTM.',
+        ['Aucun appel gtag("consent","default") détecté'],
+        [
+          'Connecter Google pour un audit complet du conteneur GTM',
+          'GTM : installer le template de votre CMP depuis la galerie de templates',
+          'gtag("consent","default",{analytics_storage:"denied",ad_storage:"denied",ad_user_data:"denied",ad_personalization:"denied",wait_for_update:2000})',
+        ], 'critical'))
+    }
   }
 
+  // c4 — Mise à jour consentement (toujours via scan navigateur — événement temps réel)
   if (raw.consentUpdate) {
-    results.push(ok('c4', 'Mise à jour consentement transmise', 'consent', ['Google','Consent Mode'],
-      'consent/update déclenché après interaction.',
-      [`analytics_storage: ${raw.consentUpdate.analytics_storage}`], []))
+    results.push(ok('c4', 'Mise à jour consentement transmise', 'consent', ['Google', 'Consent Mode'],
+      'consent/update déclenché après interaction utilisateur.',
+      [`analytics_storage: ${raw.consentUpdate.analytics_storage}`],
+      ['Vérifier dans GTM que le template envoie bien le consent/update après acceptation']))
   }
 
   // 2. TAG BASE
@@ -251,16 +325,42 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
   if (gtmData) {
     const c = gtmData.checks
 
+    // gtm1 — Template CMP dans GTM : check de configuration (complète c3)
     if (c.hasConsentModeTemplate) {
-      results.push(ok('gtm1', `Consent Mode template : ${c.consentModeTemplateName}`, 'consent', ['GTM','Consent Mode'],
-        `Template "${c.consentModeTemplateName}" dans GTM.`,
-        [`Type : ${c.consentModeTemplateType}`],
-        ['Vérifier que le template se déclenche avant les autres tags (priorité haute)']))
+      const hasPriority = true // GTM API ne retourne pas la priorité, à valider manuellement
+      results.push(ok('gtm1', `Template CMP "${c.consentModeTemplateName}" configuré dans GTM`, 'consent', ['GTM', 'Consent Mode', 'CMP'],
+        `Template "${c.consentModeTemplateName}" (${c.consentModeTemplateType}) trouvé dans le conteneur GTM.`,
+        [
+          `Template : ${c.consentModeTemplateName}`,
+          `Type CMP : ${c.consentModeTemplateType}`,
+          'Source : API GTM (vérification côté conteneur)',
+        ],
+        [
+          'Confirmer que le déclencheur est "All Pages" avec priorité ≥ 999',
+          'Tag Assistant : vérifier que ce tag est le premier à se déclencher',
+          'Tester le Mode Avancé (wait_for_update > 0) pour la modélisation des conversions',
+        ]))
     } else if (raw.cmpDetected) {
-      results.push(warn('gtm1', 'Template Consent Mode absent dans GTM', 'consent', ['GTM','Consent Mode'],
-        `${raw.cmpDetected} sur la page mais aucun template CMP dans GTM.`,
-        ['Les signaux consentement peuvent ne pas être correctement transmis'],
-        [`Ajouter le template ${raw.cmpDetected} depuis la galerie GTM`]))
+      results.push(warn('gtm1', `Template CMP absent dans GTM (${raw.cmpDetected} détecté sur la page)`, 'consent', ['GTM', 'Consent Mode', 'CMP'],
+        `${raw.cmpDetected} actif sur la page mais aucun template officiel trouvé dans le conteneur GTM.`,
+        [
+          `CMP détectée : ${raw.cmpDetected}`,
+          'Le Consent Mode v2 peut être partiellement configuré ou implémenté hors GTM',
+        ],
+        [
+          `GTM > Galerie de templates > rechercher "${raw.cmpDetected}" > installer le template officiel`,
+          'Le template officiel garantit la compatibilité avec les futures évolutions du Consent Mode',
+          'Vérifier que la CMP transmet bien les 4 signaux : analytics_storage, ad_storage, ad_user_data, ad_personalization',
+        ], 'high'))
+    } else {
+      results.push(fail('gtm1', 'Aucun template CMP dans GTM', 'consent', ['GTM', 'Consent Mode', 'CMP'],
+        'Ni template CMP ni CMP détectée sur la page. Configuration Consent Mode v2 absente.',
+        [`${gtmData.tags.length} tags analysés dans GTM — aucun tag de type CMP/Consent trouvé`],
+        [
+          'GTM > Galerie de templates > installer le template de votre CMP',
+          'CMPs certifiées Google : Cookiebot, Didomi, OneTrust, Axeptio, CookieYes',
+          'Activer les 4 paramètres + Mode Avancé (wait_for_update: 2000)',
+        ], 'critical'))
     }
 
     if (c.hasGA4ConfigTag) {
