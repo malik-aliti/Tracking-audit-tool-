@@ -91,6 +91,10 @@ export interface GTMChecks {
   // Performance
   hasTooManyTags: boolean  // > 50 tags = warning
 
+  // Server-side containers
+  hasServerContainer: boolean
+  serverContainers: Array<{ publicId: string; name: string }>
+
   // Dernière version publiée
   lastVersionDate: string | null
   lastVersionName: string | null
@@ -225,7 +229,7 @@ export async function fetchGTMData(accessToken: string, targetContainerId?: stri
     } catch {}
 
     // 8. Build checks
-    const checks = buildChecks(tags, triggers, variables, lastVersionDate, lastVersionName)
+    const checks = buildChecks(tags, triggers, variables, lastVersionDate, lastVersionName, containers)
 
     return {
       accountId,
@@ -251,7 +255,8 @@ function buildChecks(
   triggers: GTMTrigger[],
   variables: GTMVariable[],
   lastVersionDate: string | null,
-  lastVersionName: string | null
+  lastVersionName: string | null,
+  containers: GTMContainer[] = []
 ): GTMChecks {
 
   // ── All Pages trigger ─────────────────────────────────────────────────────
@@ -430,6 +435,14 @@ function buildChecks(
 
     hasTooManyTags: tags.length > 50,
 
+    // Server-side containers: usageContext includes 'server' (case-insensitive)
+    hasServerContainer: containers.some(c =>
+      c.usageContext.some(u => u.toLowerCase().includes('server'))
+    ),
+    serverContainers: containers
+      .filter(c => c.usageContext.some(u => u.toLowerCase().includes('server')))
+      .map(c => ({ publicId: c.publicId, name: c.name })),
+
     lastVersionDate,
     lastVersionName,
   }
@@ -446,6 +459,7 @@ function buildEmptyChecks(): GTMChecks {
     dataLayerVariables: [], hasUserDataVariable: false, hasTransactionIdVariable: false,
     totalTagCount: 0, pausedTags: [], tagsWithoutTrigger: [], tagsWithConsentRequired: [],
     tagsWithConsentExempt: [], hasTooManyTags: false,
+    hasServerContainer: false, serverContainers: [],
     lastVersionDate: null, lastVersionName: null,
   }
 }
