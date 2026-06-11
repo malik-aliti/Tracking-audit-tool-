@@ -500,27 +500,34 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
 
   // ─── 6. SERVER-SIDE TRACKING ─────────────────────────────────────────────────
 
-  // ss1 — sGTM (server-side GTM) : détection via URL du script GTM
+  // ss1 — sGTM (server-side GTM) : SOURCE PRIMAIRE = containers GTM API
   {
+    // Detect via GTM API: server containers have usageContext containing 'server'
+    const serverContainers = hasGTM
+      ? gtmData!.containers.filter(c => c.usageContext.some(u => u.toLowerCase() === 'server'))
+      : []
     const gtmUrl = raw.gtmScriptUrl || ''
     const isCustomDomain = gtmUrl && !gtmUrl.includes('googletagmanager.com') && gtmUrl.includes('gtm.js')
-    const isStandardDomain = gtmUrl && gtmUrl.includes('googletagmanager.com')
 
-    if (isCustomDomain) {
-      results.push(ok('ss1', `sGTM détecté — domaine personnalisé`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
+    if (serverContainers.length > 0) {
+      const sc = serverContainers[0]
+      results.push(ok('ss1', `sGTM configuré — container serveur détecté (${sc.publicId})`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
+        `Container server-side "${sc.name}" (${sc.publicId}) présent dans votre compte GTM.`,
+        [`Container : ${sc.name}`, `ID : ${sc.publicId}`, isCustomDomain ? `Domaine custom : ${new URL(gtmUrl).hostname}` : 'Déployer sur un domaine custom pour activer le first-party tracking'],
+        ['Vérifier que le container sGTM transfère bien les tags GA4, Meta, Google Ads',
+         isCustomDomain ? 'First-party cookies actifs ✓' : 'Configurer un domaine custom (Stape.io ou Cloud Run) pour les cookies 1st party']))
+    } else if (isCustomDomain) {
+      results.push(ok('ss1', `sGTM — domaine custom détecté`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
         `Script GTM chargé depuis un domaine custom : ${new URL(gtmUrl).hostname}`,
         [`URL : ${gtmUrl}`, 'First-party tracking actif — cookies 1st party durables'],
-        ['Vérifier que le container sGTM transfère bien les tags vers GA4, Meta, Google Ads']))
-    } else if (isStandardDomain) {
-      results.push(warn('ss1', 'GTM standard — pas de sGTM détecté', 'server_side', ['GTM', 'Server-Side'],
-        'GTM chargé depuis googletagmanager.com. Un server-side container améliore la durabilité des cookies et la précision de mesure.',
-        ['Script chargé depuis googletagmanager.com'],
-        ['Envisager Google Cloud Run ou Stape.io pour déployer un container sGTM',
-         'Avantages : cookies 1st party durables (ITP), meilleure déduplication CAPI'], 'low'))
-    } else if (raw.hasGTM) {
-      results.push(warn('ss1', 'GTM présent — URL script non captée', 'server_side', ['GTM', 'Server-Side'],
-        'GTM actif mais URL du script non identifiée. Vérifier si un proxy sGTM est en place.',
-        [], ['Vérifier dans le code source : l\'URL du script GTM'], 'low'))
+        ['Connecter Google pour identifier le container sGTM associé']))
+    } else if (raw.hasGTM || hasGTM) {
+      results.push(warn('ss1', 'GTM web uniquement — pas de container server-side', 'server_side', ['GTM', 'Server-Side'],
+        'Aucun container sGTM détecté dans votre compte GTM. Le tracking web-only est limité par ITP et les bloqueurs.',
+        [hasGTM ? `${gtmData!.containers.length} container(s) analysés, tous web` : 'GTM détecté sur la page sans accès API'],
+        ['GTM > Créer un container de type "Serveur"',
+         'Déployer sur Stape.io (simplifié) ou Google Cloud Run',
+         'Avantages : cookies 1st party 400j, meilleure déduplication CAPI, contournement AdBlockers'], 'low'))
     }
   }
 
