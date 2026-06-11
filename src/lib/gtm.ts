@@ -40,14 +40,18 @@ export interface ServerContainerAnalysis {
   publicId: string
   name: string
   containerId: string
-  // Config checks
+  // Clients (receive data)
   hasGA4Client: boolean
+  ga4ClientName: string | null
+  // Tags (forward data)
   hasMetaCapiTag: boolean
   hasGoogleAdsTag: boolean
   hasHttpRequestTag: boolean
+  // Other
   serverDomain: string | null
   tagCount: number
-  configured: boolean  // at least one forwarding tag configured
+  clientCount: number
+  configured: boolean
 }
 
 export interface GTMData {
@@ -139,82 +143,121 @@ function isServerContainer(c: GTMContainer): boolean {
   return false
 }
 
-async function fetchContainerWorkspaceTags(
+interface ServerWorkspaceData {
+  tags: GTMTag[]
+  clients: Array<{ name: string; type: string; parameter?: Array<{ type: string; key: string; value?: string }> }>
+}
+
+async function fetchServerContainerWorkspace(
   tagmanager: ReturnType<typeof google.tagmanager>,
   accountId: string,
   cid: string
-): Promise<GTMTag[]> {
+): Promise<ServerWorkspaceData> {
   try {
     const wsRes = await tagmanager.accounts.containers.workspaces.list({
       parent: `accounts/${accountId}/containers/${cid}`,
     })
     const workspaces = wsRes.data.workspace || []
     const ws = workspaces.find(w => w.name === 'Default Workspace') || workspaces[0]
-    if (!ws) return []
+    if (!ws) return { tags: [], clients: [] }
     const wsPath = `accounts/${accountId}/containers/${cid}/workspaces/${ws.workspaceId}`
-    const tagsRes = await tagmanager.accounts.containers.workspaces.tags.list({ parent: wsPath })
-    return (tagsRes.data.tag || []).map(t => ({
-      tagId: t.tagId || '',
-      name: t.name || '',
-      type: t.type || '',
-      firingTriggerId: t.firingTriggerId || [],
-      blockingTriggerId: t.blockingTriggerId || [],
-      parameter: (t.parameter || []).map((p: any) => ({ type: p.type, key: p.key, value: p.value })),
-      paused: t.paused || false,
+
+    const [tagsRes, clientsRes] = await Promise.allSettled([
+      tagmanager.accounts.containers.workspaces.tags.list({ parent: wsPath }),
+      (tagmanager.accounts.containers.workspaces as any).clients?.list({ parent: wsPath }),
+    ])
+
+    const tags: GTMTag[] = tagsRes.status === 'fulfilled'
+      ? (tagsRes.value.data.tag || []).map((t: any) => ({
+          tagId: t.tagId || '',
+          name: t.name || '',
+          type: t.type || '',
+          firingTriggerId: t.firingTriggerId || [],
+          blockingTriggerId: t.blockingTriggerId || [],
+          parameter: (t.parameter || []).map((p: any) => ({ type: p.type, key: p.key, value: p.value })),
+          paused: t.paused || false,
+        }))
+      : []
+
+    const rawClients = clientsRes.status === 'fulfilled' && clientsRes.value?.data?.client
+      ? clientsRes.value.data.client
+      : []
+
+    const clients = rawClients.map((cl: any) => ({
+      name: cl.name || '',
+      type: cl.type || '',
+      parameter: (cl.parameter || []).map((p: any) => ({ type: p.type, key: p.key, value: p.value })),
     }))
-  } catch {
-    return []
+
+    console.log('[GTM sGTM]', cid, '— tags:', tags.map(t => ({ name: t.name, type: t.type })), '— clients:', clients.map((cl: any) => ({ name: cl.name, type: cl.type })))
+
+    return { tags, clients }
+  } catch (err) {
+    console.error('[GTM sGTM] fetch error for', cid, err)
+    return { tags: [], clients: [] }
   }
 }
 
-function analyzeServerContainer(c: GTMContainer, tags: GTMTag[]): ServerContainerAnalysis {
-  const hasGA4Client = tags.some(t =>
-    t.type === 'gaawc' || t.type === 'gaawe' ||
+function analyzeServerContainer(c: GTMContainer, data: ServerWorkspaceData): ServerContainerAnalysis {
+  const { tags, clients } = data
+
+  // GA4 Client: in sGTM it's a CLIENT not a tag
+  // Type is typically 'gaawc' or contains 'ga4'/'google_analytics'
+  const ga4ClientItem = clients.find(cl =>
+    cl.type === 'gaawc' || cl.type === 'google_analytics_ga4' ||
+    cl.name.toLowerCase().includes('ga4') ||
+    cl.name.toLowerCase().includes('google analytics') ||
+    cl.name.toLowerCase().includes('universal analytics')
+  ) || tags.find(t =>
+    t.type === 'gaawc' ||
     t.name.toLowerCase().includes('ga4 client') ||
-    t.name.toLowerCase().includes('google analytics client') ||
     (t.name.toLowerCase().includes('ga4') && t.name.toLowerCase().includes('client'))
   )
-  const hasMetaCapiTag = tags.some(t =>
-    t.name.toLowerCase().includes('meta') ||
-    t.name.toLowerCase().includes('capi') ||
-    t.name.toLowerCase().includes('facebook') ||
-    t.name.toLowerCase().includes('conversions api') ||
-    t.type.toLowerCase().includes('meta') ||
-    t.type.toLowerCase().includes('facebook')
+  const hasGA4Client = !!ga4ClientItem
+
+  // Meta CAPI: can be tag or client
+  const hasMetaCapiTag = [...tags, ...clients].some(item =>
+    item.name.toLowerCase().includes('meta') ||
+    item.name.toLowerCase().includes('capi') ||
+    item.name.toLowerCase().includes('facebook') ||
+    item.name.toLowerCase().includes('conversions api') ||
+    (item as any).type?.toLowerCase().includes('meta') ||
+    (item as any).type?.toLowerCase().includes('facebook')
   )
+
   const hasGoogleAdsTag = tags.some(t =>
     t.name.toLowerCase().includes('google ads') ||
     t.name.toLowerCase().includes('adwords') ||
     t.type === 'awct'
   )
+
   const hasHttpRequestTag = tags.some(t =>
-    t.type === 'http_request' ||
-    t.type === 'sp_http_request' ||
+    t.type === 'http_request' || t.type === 'sp_http_request' ||
     t.name.toLowerCase().includes('http request') ||
     t.name.toLowerCase().includes('requête http')
   )
 
-  // Server domain: check domainName or parameter taggingServerUrl
-  const domainFromParam = tags
-    .flatMap(t => t.parameter || [])
-    .find(p => p.key === 'taggingServerUrl' || p.key === 'serverContainerUrl')
+  // Server domain
+  const domainFromParam = [...tags, ...clients]
+    .flatMap(item => (item as any).parameter || [])
+    .find((p: any) => p.key === 'taggingServerUrl' || p.key === 'serverContainerUrl' || p.key === 'requestPath')
     ?.value || null
-  const serverDomain = (c.domainName && c.domainName.length > 0)
-    ? c.domainName[0]
-    : domainFromParam
+  const serverDomain = (c.domainName && c.domainName.length > 0) ? c.domainName[0] : domainFromParam
 
-  const configured = hasGA4Client || hasMetaCapiTag || hasGoogleAdsTag || hasHttpRequestTag
+  const configured = hasGA4Client || hasMetaCapiTag || hasGoogleAdsTag || hasHttpRequestTag || clients.length > 0
 
   return {
     publicId: c.publicId,
     name: c.name,
     containerId: c.containerId,
     hasGA4Client,
+    ga4ClientName: ga4ClientItem?.name || null,
     hasMetaCapiTag,
     hasGoogleAdsTag,
     hasHttpRequestTag,
     serverDomain,
     tagCount: tags.length,
+    clientCount: clients.length,
     configured,
   }
 }
@@ -305,8 +348,8 @@ export async function fetchGTMData(accessToken: string, targetContainerId?: stri
     // 4. Analyze ALL server containers (fetch their tags)
     const serverContainerAnalysis: ServerContainerAnalysis[] = await Promise.all(
       serverContainers.map(async sc => {
-        const tags = await fetchContainerWorkspaceTags(tagmanager, accountId, sc.containerId)
-        return analyzeServerContainer(sc, tags)
+        const data = await fetchServerContainerWorkspace(tagmanager, accountId, sc.containerId)
+        return analyzeServerContainer(sc, data)
       })
     )
 

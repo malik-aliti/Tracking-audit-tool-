@@ -505,27 +505,30 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
     const scAnalysis = gtmData!.serverContainerAnalysis
     if (scAnalysis.length > 0) {
       const sc = scAnalysis[0]
+      const totalItems = sc.tagCount + sc.clientCount
       const details: string[] = [
         `Container : ${sc.name} (${sc.publicId})`,
-        `Tags configurés : ${sc.tagCount}`,
-        sc.serverDomain ? `Domaine : ${sc.serverDomain}` : '⚠ Aucun domaine custom configuré — cookies 1st party inactifs',
-        `GA4 Client : ${sc.hasGA4Client ? '✓ présent' : '✗ absent'}`,
+        `Tags : ${sc.tagCount} | Clients : ${sc.clientCount}`,
+        sc.serverDomain ? `Domaine custom : ${sc.serverDomain} ✓` : '⚠ Aucun domaine custom — cookies 1st party inactifs',
+        `GA4 Client : ${sc.hasGA4Client ? `✓ ${sc.ga4ClientName || 'présent'}` : '✗ absent'}`,
         `Meta CAPI : ${sc.hasMetaCapiTag ? '✓ présent' : '✗ absent'}`,
         `Google Ads : ${sc.hasGoogleAdsTag ? '✓ présent' : '✗ absent'}`,
+        `HTTP Request : ${sc.hasHttpRequestTag ? '✓ présent' : '—'}`,
       ]
       const actions: string[] = []
-      if (!sc.serverDomain) actions.push('Configurer un domaine custom (Stape.io ou Cloud Run) pour activer les cookies 1st party 400j')
-      if (!sc.hasGA4Client) actions.push('sGTM : ajouter un tag GA4 Client pour transmettre les hits GA4')
+      if (!sc.serverDomain) actions.push('Configurer un domaine custom (Stape.io ou Cloud Run) pour les cookies 1st party 400j')
+      if (!sc.hasGA4Client) actions.push('sGTM : ajouter un Client GA4 (reçoit les hits GA4 depuis le web container)')
       if (!sc.hasMetaCapiTag) actions.push('sGTM : ajouter un tag Meta CAPI pour la déduplication navigateur/serveur')
-      if (actions.length === 0) actions.push('Configuration sGTM complète ✓ — vérifier les règles de déclenchement')
+      if (actions.length === 0) actions.push('Configuration sGTM complète ✓ — vérifier les règles de déclenchement en Preview')
 
       results.push(sc.configured
-        ? ok('ss1', `sGTM configuré — ${sc.publicId} (${sc.tagCount} tag${sc.tagCount > 1 ? 's' : ''})`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
-            `Container server-side "${sc.name}" détecté et configuré.`, details, actions)
-        : warn('ss1', `sGTM présent mais vide — ${sc.publicId}`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
-            `Container server-side "${sc.name}" trouvé mais aucun tag de forwarding configuré.`,
+        ? ok('ss1', `sGTM "${sc.name}" — ${totalItems} élément${totalItems > 1 ? 's' : ''} configuré${totalItems > 1 ? 's' : ''}`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
+            `Container server-side "${sc.name}" (${sc.publicId}) actif et configuré.`, details, actions)
+        : warn('ss1', `sGTM "${sc.name}" (${sc.publicId}) — aucun client ni tag`, 'server_side', ['GTM', 'Server-Side', 'Tracking'],
+            `Container server-side trouvé mais workspace vide. Aucun client GA4 ni tag de forwarding.`,
             details,
-            ['sGTM : ajouter au minimum un GA4 Client et un tag HTTP Request ou CAPI'], 'high'))
+            ['sGTM : ajouter un Client GA4 (obligatoire pour recevoir les hits)',
+             'sGTM : ajouter un tag HTTP Request ou CAPI Meta pour le forwarding'], 'high'))
     } else {
       results.push(warn('ss1', 'GTM web uniquement — pas de container server-side', 'server_side', ['GTM', 'Server-Side'],
         `Aucun container sGTM détecté dans votre compte GTM (${gtmData!.containers.length} container(s) analysés).`,
