@@ -9,7 +9,7 @@ export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   try {
-    const { scanData, platformData, gtmData }: { scanData: ScanRawData; platformData?: PlatformData; gtmData?: GTMData } = await req.json()
+    const { scanData, platformData, gtmData, scanPixelIds }: { scanData: ScanRawData; platformData?: PlatformData; gtmData?: GTMData; scanPixelIds?: string[] } = await req.json()
     const checks = analyzeTrackingData(scanData, platformData, gtmData)
     const score = calculateScore(checks)
     const aiSummary = await generateAISummary(scanData, checks, score, gtmData)
@@ -34,8 +34,9 @@ async function generateAISummary(raw: ScanRawData, checks: any[], score: any, gt
 Score: ${score.global}/100 | OK:${score.okCount} Warn:${score.warnCount} Fail:${score.failCount}
 CMP: ${raw.cmpDetected || 'absent'} | GTM: ${raw.gtmContainers.filter((c:string)=>c.startsWith('GTM-')).join(',') || 'absent'}
 GA4: ${raw.ga4Ids.join(',') || 'absent'} | Meta Pixel: ${raw.metaPixelIds.join(',') || 'absent'}
-CAPI: ${raw.hasCAPI} | Consent Mode v2: ${raw.consentDefault ? 'configuré' : 'absent'}
+CAPI scan navigateur: ${raw.hasCAPI} | CAPI API Meta: ${platformData?.meta?.capiConnected ?? 'non vérifié'} | Consent Mode v2: ${raw.consentDefault ? 'configuré' : 'absent'}
 ${gtmSummary}
+Meta API: ${platformData?.meta ? `Pixel ${platformData.meta.pixelId} (${platformData.meta.pixelName}), CAPI: ${platformData.meta.capiConnected ? 'ACTIVE' : 'INACTIVE'}, Advanced Matching: ${platformData.meta.advancedMatchingEnabled ? 'actif' : 'inactif'}, Match Rate: ${platformData.meta.matchRate ?? 'N/A'}%` : 'Meta non connecté'}
 
 Critiques: ${critChecks.map((c:any)=>c.finding).join(' | ') || 'Aucun'}
 Échecs: ${failChecks.slice(0,3).map((c:any)=>c.finding).join(' | ') || 'Aucun'}

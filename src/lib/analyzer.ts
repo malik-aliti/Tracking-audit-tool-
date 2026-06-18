@@ -226,9 +226,10 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
   if (raw.metaPixelIds.length > 0) {
     const metaReqs = raw.networkRequests.filter(r => r.type === 'meta')
     const hasAM = metaReqs.some(r => r.params?.em || r.params?.hme || r.params?.ph)
-    if (hasAM) {
+    const apiAM = platform?.meta?.advancedMatchingEnabled
+    if (hasAM || apiAM) {
       results.push(ok('m1', 'Advanced Matching détecté', 'meta', ['Meta','Advanced Matching'],
-        'Paramètres de correspondance avancée transmis.', [], []))
+        `Correspondance avancée active${apiAM ? ' (confirmé via API Meta)' : ' (paramètres détectés dans les hits)'}.`, [], []))
     } else {
       results.push(fail('m1', 'Advanced Matching non configuré', 'meta', ['Meta','Advanced Matching'],
         'Aucun paramètre em/ph dans les hits Meta.',
@@ -236,14 +237,35 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
         ['Meta Events Manager : pixel > Paramètres > Correspondance avancée > Activer'], 'high'))
     }
 
-    if (raw.hasCAPI) {
-      results.push(ok('m2', 'CAPI connectée', 'meta', ['Meta','CAPI'],
-        'Conversions API active.', [], []))
+    // CAPI: priorité aux données API Meta (server-to-server invisible du navigateur)
+    const capiViaApi = platform?.meta?.capiConnected === true
+    const capiViaScan = raw.hasCAPI
+    if (capiViaApi) {
+      const details = [`Pixel ${raw.metaPixelIds[0]} : CAPI confirmée via API Meta`]
+      if (platform?.meta?.matchRate) details.push(`Match rate : ${platform.meta.matchRate}%`)
+      results.push(ok('m2', 'CAPI connectée (vérifié via API Meta)', 'meta', ['Meta','CAPI'],
+        'Conversions API active — événements serveur reçus par Meta.',
+        details, []))
+    } else if (capiViaScan) {
+      results.push(ok('m2', 'CAPI connectée (signaux navigateur)', 'meta', ['Meta','CAPI'],
+        'Indices CAPI détectés dans les requêtes réseau.',
+        ['Connecter Meta pour vérification complète via API'],
+        ['Connecter le compte Meta pour confirmer la configuration CAPI']))
+    } else if (platform?.meta) {
+      // API connectée mais CAPI non détectée
+      results.push(fail('m2', 'CAPI non configurée (vérifié via API Meta)', 'meta', ['Meta','CAPI'],
+        `Pixel ${platform.meta.pixelId} : aucun événement serveur détecté. 20-40% de conversions perdues (iOS/AdBlockers).`,
+        [`Pixel : ${platform.meta.pixelName}`, 'Aucun événement server-side sur les 7 derniers jours'],
+        ['GTM Server-Side : configurer le tag Meta CAPI',
+         'Meta Events Manager : ensemble de données > Paramètres > API Conversions > Configurer',
+         'Vérifier que le Pixel ID dans GTM SS correspond au bon ensemble de données Meta'], 'high'))
     } else {
-      results.push(fail('m2', 'CAPI non connectée', 'meta', ['Meta','CAPI'],
-        'Conversions iOS Safari et AdBlocker non récupérées.',
-        ['Impact : 20-40% de conversions perdues (mobile)'],
-        ['Meta Events Manager : pixel > Paramètres > Conversions API > Configurer'], 'high'))
+      // Pas d'API connectée, pas de signal scan
+      results.push(manual('m2', 'CAPI — vérification manuelle requise', 'meta', ['Meta','CAPI'],
+        'Impossible de vérifier la CAPI sans connexion Meta.',
+        ['La CAPI est server-to-server : invisible depuis le navigateur'],
+        ['Connecter le compte Meta pour vérifier automatiquement',
+         'Ou : Meta Events Manager > ensemble de données > onglet Intégrations > vérifier "API Conversions"']))
     }
   }
 
@@ -357,7 +379,7 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
   if (platform?.meta) {
     const m = platform.meta
     if (!m.advancedMatchingEnabled) {
-      results.push(fail('p2', 'Advanced Matching désactivé (API Meta)', 'meta', ['Meta','Platform'],
+      results.push(fail('p2', 'Advanced Matching désactivé (API Meta)', 'meta', ['Meta','Platform','Advanced Matching'],
         `Pixel ${m.pixelId} : Advanced Matching non activé.`,
         [`Pixel : ${m.pixelName}`],
         ['Meta Events Manager : pixel > Paramètres > Correspondance avancée > Activer']))
@@ -366,7 +388,14 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       results.push(warn('p3', `Match rate Meta : ${m.matchRate}%`, 'meta', ['Meta','Platform'],
         `Match rate ${m.matchRate}% (objectif >60%).`,
         [`Actuel : ${m.matchRate}%`],
-        ['Ajouter email, téléphone, prénom dans les paramètres AM']))
+        ['Ajouter email, téléphone, prénom dans les paramètres AM',
+         'Configurer CAPI pour améliorer le match rate']))
+    }
+    if (m.capiConnected) {
+      results.push(ok('p4', 'CAPI active (API Meta)', 'meta', ['Meta','Platform','CAPI'],
+        `Pixel ${m.pixelId} : événements serveur confirmés par Meta.`,
+        [`Pixel : ${m.pixelName}`, m.matchRate ? `Match rate : ${m.matchRate}%` : ''].filter(Boolean),
+        []))
     }
   }
 

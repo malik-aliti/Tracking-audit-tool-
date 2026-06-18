@@ -249,45 +249,79 @@ export async function fetchLinkedInData(accessToken: string, accountId?: string)
 
 export async function fetchMetaData(accessToken: string, pixelId?: string): Promise<MetaData | null> {
   try {
-    const bizRes = await fetch(`https://graph.facebook.com/v20.0/me/businesses?fields=id,name,owned_pixels{id,name,advanced_matching_fields}&access_token=${accessToken}`)
-    if (!bizRes.ok) return null
-    const bizData = await bizRes.json()
-    const pixels: any[] = []
-    ;(bizData.data || []).forEach((biz: any) => { if (biz.owned_pixels?.data) pixels.push(...biz.owned_pixels.data) })
-    if (!pixels.length) return null
-    const pixel = pixelId ? pixels.find(p => p.id === pixelId) || pixels[0] : pixels[0]
+    let pid = pixelId
+    let pixelName = ''
+    let advancedMatchingFields: string[] = []
+
+    if (pid) {
+      // Query the specific pixel/dataset directly (most reliable)
+      const directRes = await fetch(
+        `https://graph.facebook.com/v20.0/${pid}?fields=id,name,automatic_matching_fields&access_token=${accessToken}`
+      )
+      if (directRes.ok) {
+        const d = await directRes.json()
+        pixelName = d.name || `Pixel ${pid}`
+        advancedMatchingFields = d.automatic_matching_fields || []
+      }
+    }
+
+    // Fallback: discover pixels via business accounts
+    if (!pid) {
+      const bizRes = await fetch(
+        `https://graph.facebook.com/v20.0/me/businesses?fields=id,name,owned_pixels{id,name,automatic_matching_fields}&access_token=${accessToken}`
+      )
+      if (!bizRes.ok) return null
+      const bizData = await bizRes.json()
+      const pixels: any[] = []
+      ;(bizData.data || []).forEach((biz: any) => { if (biz.owned_pixels?.data) pixels.push(...biz.owned_pixels.data) })
+      if (!pixels.length) {
+        // Try direct user pixels as fallback
+        const mePixelsRes = await fetch(
+          `https://graph.facebook.com/v20.0/me/adspixels?fields=id,name,automatic_matching_fields&access_token=${accessToken}`
+        )
+        if (mePixelsRes.ok) {
+          const mePixelsData = await mePixelsRes.json()
+          pixels.push(...(mePixelsData.data || []))
+        }
+      }
+      if (!pixels.length) return null
+      const pixel = pixels[0]
+      pid = pixel.id
+      pixelName = pixel.name || `Pixel ${pid}`
+      advancedMatchingFields = pixel.automatic_matching_fields || pixel.advanced_matching_fields || []
+    }
 
     const now = Math.floor(Date.now() / 1000)
     const weekAgo = now - 7 * 24 * 3600
 
-    // Fetch browser-side event stats
-    const eventsRes = await fetch(`https://graph.facebook.com/v20.0/${pixel.id}/stats?aggregation=event&start_time=${weekAgo}&end_time=${now}&access_token=${accessToken}`)
+    // Fetch event stats (all sources combined)
+    const eventsRes = await fetch(
+      `https://graph.facebook.com/v20.0/${pid}/stats?aggregation=event&start_time=${weekAgo}&end_time=${now}&access_token=${accessToken}`
+    )
     const eventsData = eventsRes.ok ? await eventsRes.json() : { data: [] }
-    const eventStats = (eventsData.data || []).map((e: any) => ({ name: e.event || '', count: e.count || 0, matchRate: e.match_rate_approx }))
+    const eventStats = (eventsData.data || []).map((e: any) => ({
+      name: e.event || '', count: e.count || 0, matchRate: e.match_rate_approx,
+      countCapi: e.count_capi ?? e.server_event_count ?? undefined,
+    }))
 
-    // Detect CAPI: check for server-side events on this pixel/dataset
+    // ── CAPI Detection: multiple methods ──────────────────────────────
     let capiConnected = false
-    let serverEventCount = 0
+    let capiEventCount = 0
     let matchRate: number | undefined
-    try {
-      const serverStatsRes = await fetch(
-        `https://graph.facebook.com/v20.0/${pixel.id}/stats?aggregation=event&event_source=server&start_time=${weekAgo}&end_time=${now}&access_token=${accessToken}`
-      )
-      if (serverStatsRes.ok) {
-        const serverData = await serverStatsRes.json()
-        const serverEvents = serverData.data || []
-        serverEventCount = serverEvents.reduce((sum: number, e: any) => sum + (e.count || 0), 0)
-        if (serverEventCount > 0) capiConnected = true
-        const rates = serverEvents.filter((e: any) => e.match_rate_approx != null).map((e: any) => e.match_rate_approx)
-        if (rates.length) matchRate = Math.round(rates.reduce((a: number, b: number) => a + b, 0) / rates.length)
-      }
-    } catch {}
 
-    // Fallback: check dataset setup info for server_events_business_ids
+    // Method 1: Check event stats for server-side indicators (count_capi field)
+    for (const evt of eventStats) {
+      if (evt.countCapi !== undefined && evt.countCapi > 0) {
+        capiConnected = true
+        capiEventCount += evt.countCapi
+      }
+    }
+
+    // Method 2: Check server_events_business_ids on the pixel/dataset
     if (!capiConnected) {
       try {
         const setupRes = await fetch(
-          `https://graph.facebook.com/v20.0/${pixel.id}?fields=id,server_events_business_ids&access_token=${accessToken}`
+          `https://graph.facebook.com/v20.0/${pid}?fields=server_events_business_ids&access_token=${accessToken}`
         )
         if (setupRes.ok) {
           const setupData = await setupRes.json()
@@ -296,9 +330,58 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
       } catch {}
     }
 
+    // Method 3: Check da_checks diagnostic endpoint
+    if (!capiConnected) {
+      try {
+        const daRes = await fetch(
+          `https://graph.facebook.com/v20.0/${pid}/da_checks?access_token=${accessToken}`
+        )
+        if (daRes.ok) {
+          const daData = await daRes.json()
+          const checks = daData.data || []
+          for (const check of checks) {
+            const desc = JSON.stringify(check).toLowerCase()
+            if (desc.includes('server') || desc.includes('capi') || desc.includes('api_conversion')) {
+              capiConnected = true
+              break
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Method 4: Query stats aggregated by event_source (may not exist on all API versions)
+    if (!capiConnected) {
+      try {
+        const srcRes = await fetch(
+          `https://graph.facebook.com/v20.0/${pid}/stats?aggregation=event&event_source=SERVER&start_time=${weekAgo}&end_time=${now}&access_token=${accessToken}`
+        )
+        if (srcRes.ok) {
+          const srcData = await srcRes.json()
+          const serverEvents = srcData.data || []
+          capiEventCount = serverEvents.reduce((sum: number, e: any) => sum + (e.count || 0), 0)
+          if (capiEventCount > 0) capiConnected = true
+        }
+      } catch {}
+    }
+
+    // Method 5: Match rate heuristic — high match rates strongly suggest CAPI
+    // Browser-only typically yields 20-30% match rate; CAPI pushes it to 60-90%
+    const rates = eventStats.filter((e: any) => e.matchRate != null && e.count > 10).map((e: any) => e.matchRate)
+    if (rates.length > 0) {
+      matchRate = Math.round(rates.reduce((a: number, b: number) => a + b, 0) / rates.length)
+      if (!capiConnected && matchRate > 55) {
+        capiConnected = true
+      }
+    }
+
+    const advancedMatchingEnabled = advancedMatchingFields.length > 0
+
+    console.log(`[Meta CAPI Detection] Pixel ${pid}: capiConnected=${capiConnected}, capiEventCount=${capiEventCount}, matchRate=${matchRate}, methods tried: 5`)
+
     return {
-      pixelId: pixel.id, pixelName: pixel.name || `Pixel ${pixel.id}`,
-      advancedMatchingEnabled: !!(pixel.advanced_matching_fields?.length > 0),
+      pixelId: pid!, pixelName: pixelName || `Pixel ${pid}`,
+      advancedMatchingEnabled,
       capiConnected, matchRate, eventStats,
       recentEvents: eventStats.map((e: any) => e.name), qualityScore: undefined,
     }

@@ -365,7 +365,8 @@ export default function Home() {
         }
         if (connections.meta?.accessToken) {
           try {
-            const r = await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken }) })
+            const scanPixelId = scanJson.data?.metaPixelIds?.[0]
+            const r = await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken, pixelId: scanPixelId }) })
             const j = await r.json()
             if (j.success) platformData = { ...platformData, meta: j.meta }
           } catch {}
@@ -373,7 +374,7 @@ export default function Home() {
         const analyzeRes = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scanData: scanJson.data, platformData, gtmData }),
+          body: JSON.stringify({ scanData: scanJson.data, platformData, gtmData, scanPixelIds: scanJson.data?.metaPixelIds }),
         })
         const analyzeJson = await analyzeRes.json()
         if (!analyzeJson.success) throw new Error(analyzeJson.error || 'Erreur analyse')
@@ -447,10 +448,11 @@ export default function Home() {
 
       if (connections.meta?.accessToken) {
         try {
+          const scanPixelId = scanData.metaPixelIds?.[0]
           const mRes = await fetch('/api/meta/pixel', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken: connections.meta.accessToken }),
+            body: JSON.stringify({ accessToken: connections.meta.accessToken, pixelId: scanPixelId }),
           })
           const mJson = await mRes.json()
           if (mJson.success) {
@@ -463,7 +465,7 @@ export default function Home() {
       const analyzeRes = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanData, platformData, gtmData }),
+        body: JSON.stringify({ scanData, platformData, gtmData, scanPixelIds: scanData.metaPixelIds }),
       })
       const analyzeJson = await analyzeRes.json()
       if (!analyzeJson.success) throw new Error(analyzeJson.error || 'Erreur d\'analyse')
