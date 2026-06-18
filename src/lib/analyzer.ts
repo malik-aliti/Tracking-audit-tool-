@@ -1,5 +1,5 @@
 import type { ScanRawData, CheckResult, AuditScore, PlatformData } from '@/types'
-import type { GTMData } from '@/lib/gtm'
+import type { GTMData, GTMServerChecks } from '@/lib/gtm'
 
 function ok(id: string, label: string, category: CheckResult['category'], tags: string[], finding: string, details: string[], actions: string[]): CheckResult {
   return { id, label, status: 'ok', finding, details, actions, category, tags, impact: 'low' }
@@ -16,6 +16,7 @@ function manual(id: string, label: string, category: CheckResult['category'], ta
 
 export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, gtmData?: GTMData): CheckResult[] {
   const results: CheckResult[] = []
+  const serverChecks: GTMServerChecks | undefined = (gtmData?.checks as any)?.server
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 1. CONSENTEMENT & RGPD
@@ -119,6 +120,18 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       'Ni GTM ni gtag.js détecté. Aucun tracking Google.',
       ['window.google_tag_manager non défini'],
       ['Installer GTM : tagmanager.google.com'], 'critical'))
+  }
+
+  // GTM Server-Side container
+  if (serverChecks?.hasServerContainer) {
+    results.push(ok('t1b', `GTM Server-Side ${gtmData?.server?.publicId || ''} détecté`, 'tag_base', ['Google','GTM','Server'],
+      `Container Server-Side : ${gtmData?.server?.containerName || 'N/A'} (${serverChecks.totalTagCount} tags).`,
+      [`Container : ${gtmData?.server?.publicId}`, `Tags : ${serverChecks.totalTagCount}`], []))
+  } else if (gtmData) {
+    results.push(warn('t1b', 'Aucun container GTM Server-Side', 'tag_base', ['Google','GTM','Server'],
+      'Pas de container Server-Side dans ce compte GTM. CAPI et Enhanced Conversions SS impossibles.',
+      ['Le container Server-Side est requis pour Meta CAPI et Enhanced Conversions'],
+      ['Créer un container Server-Side dans GTM', 'Configurer un endpoint sGTM (Cloud Run, Stape.io, etc.)'], 'high'))
   }
 
   // GA4 présent
@@ -336,33 +349,55 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
         ['Meta Events Manager : pixel > Paramètres > Correspondance avancée > Activer'], 'high'))
     }
 
-    // CAPI: priorité aux données API Meta (server-to-server invisible du navigateur)
+    // CAPI: check GTM SS (tag Meta CAPI) + API Meta + scan
+    const capiViaGtmSS = serverChecks?.hasMetaCAPITag === true
     const capiViaApi = platform?.meta?.capiConnected === true
     const capiViaScan = raw.hasCAPI
-    if (capiViaApi) {
+
+    if (capiViaGtmSS && capiViaApi) {
+      const details = [
+        `Tag GTM SS : "${serverChecks!.metaCAPITagName}"${serverChecks!.metaCAPIPixelId ? ` (Pixel ${serverChecks!.metaCAPIPixelId})` : ''}`,
+        `API Meta : événements serveur confirmés pour Pixel ${pixelId}`,
+      ]
+      if (platform?.meta?.matchRate) details.push(`Match rate : ${platform.meta.matchRate}%`)
+      results.push(ok('m2', 'CAPI active (GTM SS + API Meta)', 'meta', ['Meta','CAPI','Server'],
+        'Conversions API pleinement opérationnelle — tag GTM Server-Side configuré et événements reçus par Meta.',
+        details, []))
+    } else if (capiViaGtmSS) {
+      results.push(ok('m2', `CAPI configurée dans GTM SS ("${serverChecks!.metaCAPITagName}")`, 'meta', ['Meta','CAPI','Server'],
+        `Tag Meta CAPI trouvé dans le container Server-Side.${serverChecks!.metaCAPIPixelId ? ` Pixel : ${serverChecks!.metaCAPIPixelId}` : ''}`,
+        [`Tag : ${serverChecks!.metaCAPITagName}`, ...(serverChecks!.metaCAPIPixelId ? [`Pixel ID : ${serverChecks!.metaCAPIPixelId}`] : [])],
+        ['Connecter Meta pour vérifier que les événements serveur sont bien reçus']))
+    } else if (capiViaApi) {
       const details = [`Pixel ${pixelId} : CAPI confirmée via API Meta`]
       if (platform?.meta?.matchRate) details.push(`Match rate : ${platform.meta.matchRate}%`)
       results.push(ok('m2', 'CAPI connectée (vérifié via API Meta)', 'meta', ['Meta','CAPI'],
         'Conversions API active — événements serveur reçus par Meta.',
-        details, []))
+        details, serverChecks ? [] : ['Vérifier la configuration du tag CAPI dans GTM Server-Side']))
     } else if (capiViaScan) {
       results.push(ok('m2', 'CAPI connectée (signaux navigateur)', 'meta', ['Meta','CAPI'],
         'Indices CAPI détectés dans les requêtes réseau.',
-        ['Connecter Meta pour vérification complète via API'],
-        ['Connecter le compte Meta pour confirmer la configuration CAPI']))
+        ['Connecter Google + Meta pour vérification complète via GTM SS et API'],
+        ['Connecter les comptes pour confirmer la configuration CAPI']))
+    } else if (serverChecks?.hasServerContainer && !capiViaGtmSS) {
+      results.push(fail('m2', 'CAPI absente du container GTM Server-Side', 'meta', ['Meta','CAPI','Server'],
+        `Container SS présent (${serverChecks.totalTagCount} tags) mais aucun tag Meta CAPI trouvé.`,
+        ['Le container Server-Side existe mais ne contient pas de tag Meta Conversions API'],
+        ['GTM Server-Side : ajouter le tag Meta Conversions API',
+         'Configurer le Pixel ID et le Server Access Token',
+         'Vérifier que le tag se déclenche sur les événements pertinents'], 'high'))
     } else if (platform?.meta) {
       results.push(fail('m2', 'CAPI non configurée (vérifié via API Meta)', 'meta', ['Meta','CAPI'],
-        `Pixel ${platform.meta.pixelId} : aucun événement serveur détecté. 20-40% de conversions perdues (iOS/AdBlockers).`,
+        `Pixel ${platform.meta.pixelId} : aucun événement serveur détecté. 20-40% de conversions perdues.`,
         [`Pixel : ${platform.meta.pixelName}`, 'Aucun événement server-side sur les 7 derniers jours'],
         ['GTM Server-Side : configurer le tag Meta CAPI',
-         'Meta Events Manager : ensemble de données > Paramètres > API Conversions > Configurer',
-         'Vérifier que le Pixel ID dans GTM SS correspond au bon ensemble de données Meta'], 'high'))
+         'Meta Events Manager > API Conversions > Configurer'], 'high'))
     } else {
       results.push(manual('m2', 'CAPI — vérification manuelle requise', 'meta', ['Meta','CAPI'],
-        'Impossible de vérifier la CAPI sans connexion Meta. La CAPI est server-to-server : invisible depuis le navigateur.',
-        ['Connecter le compte Meta pour vérification automatique'],
-        ['Connecter le compte Meta pour vérifier automatiquement',
-         'Ou : Meta Events Manager > ensemble de données > onglet Intégrations > vérifier "API Conversions"']))
+        'Connecter Google (GTM) et Meta pour vérifier la CAPI automatiquement.',
+        ['La CAPI est server-to-server : invisible depuis le navigateur', 'Nécessite GTM SS + API Meta pour vérification'],
+        ['Connecter Google pour analyser le container GTM Server-Side',
+         'Connecter Meta pour vérifier les événements serveur']))
     }
 
     // Meta match rate (from API)
@@ -475,6 +510,52 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
           ['Auditer et supprimer les tags obsolètes'])
       : ok('gtm9', `${c.totalTagCount} tags GTM — volume correct`, 'qa', ['GTM','QA'],
           `${c.totalTagCount} tags. Volume nominal.`, [], []))
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 6b. GTM SERVER-SIDE CHECKS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (serverChecks) {
+    // GA4 Server tag
+    if (serverChecks.hasGA4ServerTag) {
+      results.push(ok('ss1', `GA4 Server tag : "${serverChecks.ga4ServerTagName}"`, 'ga4', ['GA4','GTM','Server'],
+        'Tag GA4 présent dans le container Server-Side. Les événements transitent par le serveur.',
+        [`Tag : ${serverChecks.ga4ServerTagName}`], []))
+    } else {
+      results.push(warn('ss1', 'Pas de tag GA4 dans GTM Server-Side', 'ga4', ['GA4','GTM','Server'],
+        'Le container SS n\'a pas de tag GA4. Les hits GA4 passent directement du navigateur à Google.',
+        [],
+        ['Ajouter un tag GA4 dans GTM SS pour le server-side tagging']))
+    }
+
+    // Google Ads Server tag
+    if (serverChecks.hasGoogleAdsServerTag) {
+      results.push(ok('ss2', `Google Ads Server tag : "${serverChecks.googleAdsServerTagName}"`, 'google_ads', ['Google Ads','GTM','Server'],
+        'Tag Google Ads présent dans le container Server-Side.',
+        [`Tag : ${serverChecks.googleAdsServerTagName}`], []))
+    }
+
+    // Enhanced Conversions Server
+    if (serverChecks.hasEnhancedConversionsServer) {
+      results.push(ok('ss3', `Enhanced Conversions SS : "${serverChecks.enhancedConversionsServerTagName}"`, 'google_ads', ['Google Ads','Enhanced Conversions','Server'],
+        'Enhanced Conversions configuré côté serveur.',
+        [`Tag : ${serverChecks.enhancedConversionsServerTagName}`], []))
+    }
+
+    // QA: paused/orphan tags in SS
+    if (serverChecks.pausedTags.length > 0) {
+      results.push(warn('ss4', `${serverChecks.pausedTags.length} tag(s) SS en pause`, 'qa', ['GTM','QA','Server'],
+        `Tags SS en pause : ${serverChecks.pausedTags.slice(0, 3).join(', ')}.`,
+        serverChecks.pausedTags.map(t => `${t}`),
+        ['Vérifier si ces tags SS doivent être réactivés ou supprimés']))
+    }
+    if (serverChecks.tagsWithoutTrigger.length > 0) {
+      results.push(warn('ss5', `${serverChecks.tagsWithoutTrigger.length} tag(s) SS sans déclencheur`, 'qa', ['GTM','QA','Server'],
+        `Tags SS orphelins : ${serverChecks.tagsWithoutTrigger.slice(0, 3).join(', ')}.`,
+        serverChecks.tagsWithoutTrigger.map(t => `${t}`),
+        ['Ces tags SS ne se déclencheront jamais']))
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

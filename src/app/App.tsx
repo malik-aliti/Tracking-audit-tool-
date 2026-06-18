@@ -361,7 +361,8 @@ export default function Home() {
         let gtmData: GTMData | undefined
         if (connections.google?.accessToken) {
           try {
-            const r = await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken }) })
+            const scannedGtmIds = scanJson.data?.gtmContainers?.filter((c: string) => c.startsWith('GTM-'))
+            const r = await fetch('/api/google/ga4', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.google.accessToken, scannedGtmIds }) })
             const j = await r.json()
             if (j.success) {
               platformData = { ...platformData, ga4: j.ga4, googleAds: j.googleAds }
@@ -442,7 +443,7 @@ export default function Home() {
           const gRes = await fetch('/api/google/ga4', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken: connections.google.accessToken }),
+            body: JSON.stringify({ accessToken: connections.google.accessToken, scannedGtmIds: scanData.gtmContainers?.filter((c: string) => c.startsWith('GTM-')) }),
           })
           const gJson = await gRes.json()
           if (gJson.success) {
