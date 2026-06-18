@@ -17,7 +17,11 @@ function manual(id: string, label: string, category: CheckResult['category'], ta
 export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, gtmData?: GTMData): CheckResult[] {
   const results: CheckResult[] = []
 
-  // 1. CONSENT
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 1. CONSENTEMENT & RGPD
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // CMP Detection
   if (raw.cmpDetected) {
     results.push(ok('c1', `CMP : ${raw.cmpDetected}`, 'consent', ['Privacy','CMP'],
       `${raw.cmpDetected} identifié et actif sur la page.`,
@@ -31,6 +35,7 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
        'Configurer avec Consent Mode v2'], 'critical'))
   }
 
+  // TCF v2.2
   if (raw.hasTCF) {
     results.push(ok('c2', 'TCF v2.2 actif', 'consent', ['Privacy','TCF'],
       'Framework TCF v2.2 détecté.',
@@ -43,6 +48,7 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       ['Pour cible UE : activer TCF v2.2 dans votre CMP']))
   }
 
+  // Consent Mode v2 — check dataLayer + GTM template + network signals
   const hasCD = !!raw.consentDefault
   const allParams = raw.consentDefault &&
     raw.consentDefault.analytics_storage !== undefined &&
@@ -50,16 +56,21 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
     raw.consentDefault.ad_user_data !== undefined &&
     raw.consentDefault.ad_personalization !== undefined
 
+  // Also check GTM API for consent mode template as confirmation
+  const gtmHasConsentTemplate = gtmData?.checks?.hasConsentModeTemplate === true
+  const consentTemplateName = gtmData?.checks?.consentModeTemplateName
+
   if (hasCD && allParams) {
     const isAdvanced = !!(raw.consentDefault?.wait_for_update && raw.consentDefault.wait_for_update > 0)
     results.push(ok('c3', `Consent Mode v2 ${isAdvanced ? '(Mode Avancé)' : '(Mode Basique)'}`, 'consent', ['Google','Consent Mode'],
-      `4 paramètres définis${isAdvanced ? ` avec wait_for_update: ${raw.consentDefault?.wait_for_update}ms` : ''}.`,
+      `4 paramètres définis${isAdvanced ? ` avec wait_for_update: ${raw.consentDefault?.wait_for_update}ms` : ''}.${gtmHasConsentTemplate ? ` Template GTM : ${consentTemplateName}` : ''}`,
       [
         `analytics_storage: ${raw.consentDefault?.analytics_storage}`,
         `ad_storage: ${raw.consentDefault?.ad_storage}`,
         `ad_user_data: ${raw.consentDefault?.ad_user_data}`,
         `ad_personalization: ${raw.consentDefault?.ad_personalization}`,
         isAdvanced ? 'Mode Avancé — modélisation des conversions activée' : 'Mode Basique — tags bloqués avant consentement',
+        ...(gtmHasConsentTemplate ? [`Template GTM : ${consentTemplateName}`] : []),
       ],
       isAdvanced ? ['Mode Avancé optimal.'] : ['Passer au Mode Avancé pour activer la modélisation']))
   } else if (hasCD) {
@@ -67,6 +78,12 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       'consent/default présent mais les 4 paramètres ne sont pas tous définis.',
       ['Paramètres requis : analytics_storage, ad_storage, ad_user_data, ad_personalization'],
       ['Ajouter les paramètres manquants dans votre CMP ou template GTM'], 'high'))
+  } else if (gtmHasConsentTemplate) {
+    // dataLayer didn't capture it but GTM has the template — likely firing correctly
+    results.push(ok('c3', `Consent Mode v2 via GTM (${consentTemplateName})`, 'consent', ['Google','Consent Mode'],
+      `Template "${consentTemplateName}" configuré dans GTM. Le consent/default peut ne pas apparaître dans le dataLayer initial mais le template gère le consentement.`,
+      [`Template GTM : ${consentTemplateName}`, 'Le consent mode est géré par le template CMP dans GTM'],
+      ['Vérifier dans GTM Preview que le consent/default se déclenche avant les autres tags']))
   } else {
     results.push(fail('c3', 'Consent Mode v2 absent', 'consent', ['Google','Consent Mode'],
       'Aucun signal consent/default. Tags Google non conformes.',
@@ -81,10 +98,14 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       [`analytics_storage: ${raw.consentUpdate.analytics_storage}`], []))
   }
 
-  // 2. TAG BASE
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2. TAGGAGE DE BASE (containers GTM, présence GA4/Ads/Pixel)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GTM Web
   if (raw.hasGTM && raw.gtmContainers.some(c => c.startsWith('GTM-'))) {
     const gtmId = raw.gtmContainers.find(c => c.startsWith('GTM-'))
-    results.push(ok('t1', `GTM ${gtmId} actif`, 'tag_base', ['Google','GTM'],
+    results.push(ok('t1', `GTM Web ${gtmId} actif`, 'tag_base', ['Google','GTM'],
       `Conteneur ${gtmId} chargé.`,
       [`Container : ${gtmId}`],
       ['Vérifier le noscript GTM après <body>']))
@@ -100,6 +121,7 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       ['Installer GTM : tagmanager.google.com'], 'critical'))
   }
 
+  // GA4 présent
   if (raw.ga4Ids.length > 0) {
     results.push(ok('t2', `GA4 ${raw.ga4Ids[0]}`, 'tag_base', ['GA4','Google'],
       `Propriété GA4 ${raw.ga4Ids[0]} liée au conteneur GTM.`,
@@ -118,25 +140,7 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
     }
   }
 
-  if (raw.metaPixelIds.length > 0) {
-    const isDouble = raw.networkRequests.filter(r => r.type === 'meta' && r.params?.ec === 'double').length > 0
-    if (isDouble) {
-      results.push(warn('t3', `Pixel Meta ${raw.metaPixelIds[0]} — double PageView`, 'tag_base', ['Meta'],
-        'PageView envoyé 2 fois. Double-comptabilisation probable.',
-        ['Pixel natif ET template GTM simultanément'],
-        ['Supprimer le pixel natif du HTML, garder uniquement GTM'], 'high'))
-    } else {
-      results.push(ok('t3', `Pixel Meta ${raw.metaPixelIds[0]}`, 'tag_base', ['Meta'],
-        `Pixel ${raw.metaPixelIds[0]} actif.`,
-        [`CAPI : ${raw.hasCAPI ? 'connectée' : 'non connectée'}`],
-        [raw.hasCAPI ? 'CAPI active' : 'Connecter la Conversions API']))
-    }
-  } else {
-    results.push(warn('t3', 'Pixel Meta non détecté', 'tag_base', ['Meta'],
-      'Aucun pixel Meta détecté.', [],
-      ['Installer via GTM (template Meta Pixel officiel)']))
-  }
-
+  // Conversion Linker
   const hasGcl = raw.cookies.some(c => c.name.startsWith('_gcl'))
   if (hasGcl) {
     results.push(ok('t4', 'Conversion Linker actif', 'tag_base', ['Google Ads','GTM'],
@@ -149,20 +153,35 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       ['GTM : ajouter tag Conversion Linker sur All Pages']))
   }
 
-  // 3. GA4
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 3. ANALYTICS (GA4 + données API)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Custom events — combine dataLayer scan + API GA4 data
   const custom = raw.dataLayerEvents.filter(e => e.event && !e.event.startsWith('gtm.') && e.event !== 'cookie_consent_update')
-  if (custom.length > 0) {
-    results.push(ok('g1', `${custom.length} événement(s) custom`, 'ga4', ['GA4','Events'],
-      `Events : ${custom.map(e => e.event).join(', ')}.`,
-      custom.map(e => `event: ${e.event}`), []))
+  const apiEvents = platform?.ga4?.recentEvents || []
+  const apiConversions = platform?.ga4?.conversionEvents || []
+  const allCustomEventNames = [...new Set([
+    ...custom.map(e => e.event).filter(Boolean),
+    ...apiEvents.map(e => e.name).filter(n => !n.startsWith('page_view') && !n.startsWith('session_start') && !n.startsWith('first_visit') && !n.startsWith('user_engagement')),
+  ])]
+
+  if (allCustomEventNames.length > 0) {
+    const source = custom.length > 0 && apiEvents.length > 0
+      ? '(dataLayer + API GA4)'
+      : apiEvents.length > 0 ? '(vérifié via API GA4)' : '(dataLayer)'
+    results.push(ok('g1', `${allCustomEventNames.length} événement(s) custom ${source}`, 'ga4', ['GA4','Events'],
+      `Events : ${allCustomEventNames.slice(0, 8).join(', ')}.`,
+      allCustomEventNames.slice(0, 10).map(e => `event: ${e}`), []))
   } else {
     results.push(warn('g1', 'Aucun événement custom', 'ga4', ['GA4','Events'],
       'Aucun événement business (form_submit, generate_lead, cta_click).',
-      ['dataLayer : seuls gtm.js, gtm.dom détectés'],
+      ['dataLayer : seuls gtm.js, gtm.dom détectés', ...(platform?.ga4 ? ['API GA4 : aucun événement custom récent'] : [])],
       ['Créer des déclencheurs GTM pour les actions clés',
        'dataLayer.push({event:"generate_lead", ...})'], 'high'))
   }
 
+  // UTM
   const urlParams = new URLSearchParams(new URL(raw.finalUrl || raw.url).search)
   if (urlParams.has('utm_source')) {
     results.push(ok('g2', `UTM source: ${urlParams.get('utm_source')}`, 'ga4', ['GA4','Attribution'],
@@ -173,12 +192,20 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       ['Tester depuis un clic campagne'], 'low'))
   }
 
+  // Forms & CTAs
   if (raw.forms.length > 0 || raw.ctaElements > 0) {
     const hasConvEvent = custom.some(e => ['form_submit','generate_lead','contact','signup','purchase'].includes(e.event || ''))
-    if (hasConvEvent) {
+    const apiHasConv = apiConversions.some(e => e.isActive)
+    const gtmHasFormTrigger = gtmData?.tags?.some((t: any) =>
+      t.name?.toLowerCase().includes('form') || t.name?.toLowerCase().includes('lead') || t.name?.toLowerCase().includes('conversion')
+    )
+    if (hasConvEvent || apiHasConv || gtmHasFormTrigger) {
+      const detail = apiHasConv
+        ? `Conversions GA4 actives : ${apiConversions.filter(e => e.isActive).map(e => e.name).join(', ')}`
+        : gtmHasFormTrigger ? 'Tags de conversion présents dans GTM' : 'Événements de conversion détectés dans le dataLayer'
       results.push(ok('g3', 'Formulaires et CTAs trackés', 'ga4', ['GA4','Conversions','Micro-signaux'],
-        `${raw.forms.length} form(s) et ${raw.ctaElements} CTA(s) avec événement de conversion.`,
-        [`Forms : ${raw.forms.length}`, `CTAs : ${raw.ctaElements}`], []))
+        `${raw.forms.length} form(s) et ${raw.ctaElements} CTA(s). ${detail}`,
+        [`Forms : ${raw.forms.length}`, `CTAs : ${raw.ctaElements}`, detail], []))
     } else {
       results.push(fail('g3', 'Formulaires et CTAs — tracking absent', 'ga4', ['GA4','Conversions','Micro-signaux'],
         `${raw.forms.length} form(s) et ${raw.ctaElements} CTA(s) sans événement de conversion.`,
@@ -193,14 +220,52 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       ['Identifier la solution de formulaire et configurer le tracking via webhook']))
   }
 
-  if (!custom.some(e => e.event === 'scroll')) {
-    results.push(warn('g4', 'Scroll et clics non trackés', 'ga4', ['GA4','Micro-signaux'],
-      'Aucun tracking de scroll ni de clic.',
-      ['Aucun événement scroll détecté'],
-      ['GA4 Admin : activer Enhanced Measurement (scrolls, clics sortants)']))
+  // Scroll & clics — check Enhanced Measurement via API first, then fallback to dataLayer
+  const em = platform?.ga4?.enhancedMeasurement
+  if (em) {
+    const enabled = []
+    const disabled = []
+    if (em.scrollsEnabled) enabled.push('scroll') ; else disabled.push('scroll')
+    if (em.outboundClicksEnabled) enabled.push('clics sortants') ; else disabled.push('clics sortants')
+    if (em.siteSearchEnabled) enabled.push('recherche') ; else disabled.push('recherche')
+    if (em.videoEngagementEnabled) enabled.push('vidéo') ; else disabled.push('vidéo')
+    if (em.fileDownloadsEnabled) enabled.push('téléchargements') ; else disabled.push('téléchargements')
+    if (em.formInteractionsEnabled) enabled.push('formulaires') ; else disabled.push('formulaires')
+    if (em.pageChangesEnabled) enabled.push('changements de page') ; else disabled.push('changements de page')
+
+    if (em.scrollsEnabled && em.outboundClicksEnabled) {
+      results.push(ok('g4', `Enhanced Measurement actif (${enabled.length}/7)`, 'ga4', ['GA4','Micro-signaux'],
+        `Vérifié via API GA4. Actifs : ${enabled.join(', ')}.`,
+        [...enabled.map(e => `✓ ${e}`), ...disabled.map(e => `✗ ${e}`)],
+        disabled.length > 0 ? [`Activer dans GA4 Admin : ${disabled.join(', ')}`] : []))
+    } else {
+      results.push(warn('g4', `Enhanced Measurement partiel (${enabled.length}/7)`, 'ga4', ['GA4','Micro-signaux'],
+        `Vérifié via API GA4. Scroll : ${em.scrollsEnabled ? 'actif' : 'inactif'}, Clics : ${em.outboundClicksEnabled ? 'actif' : 'inactif'}.`,
+        [...enabled.map(e => `✓ ${e}`), ...disabled.map(e => `✗ ${e}`)],
+        ['GA4 Admin : Data Streams > Enhanced Measurement > activer scroll et clics']))
+    }
+  } else {
+    // Fallback: check dataLayer for scroll events
+    const hasScroll = custom.some(e => e.event === 'scroll')
+    const gtmHasScrollTag = gtmData?.tags?.some((t: any) =>
+      t.name?.toLowerCase().includes('scroll') || t.name?.toLowerCase().includes('clic')
+    )
+    if (hasScroll || gtmHasScrollTag) {
+      results.push(ok('g4', 'Scroll et clics trackés', 'ga4', ['GA4','Micro-signaux'],
+        gtmHasScrollTag ? 'Tags scroll/clics présents dans GTM.' : 'Événement scroll détecté dans le dataLayer.', [], []))
+    } else {
+      results.push(warn('g4', 'Scroll et clics non confirmés', 'ga4', ['GA4','Micro-signaux'],
+        'Aucun tracking de scroll/clic détecté sur cette page. Vérifier Enhanced Measurement dans GA4 Admin.',
+        ['Connecter Google pour vérifier via API GA4'],
+        ['GA4 Admin : activer Enhanced Measurement (scrolls, clics sortants)',
+         'Connecter Google pour une vérification automatique']))
+    }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
   // 4. GOOGLE ADS
+  // ═══════════════════════════════════════════════════════════════════════════
+
   if (raw.googleAdsIds.length > 0) {
     results.push(ok('ga1', `Google Ads ${raw.googleAdsIds[0]}`, 'google_ads', ['Google Ads'],
       'Tag Google Ads détecté.', [], []))
@@ -222,18 +287,52 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       ['Page de confirmation : dataLayer.push({event:"generate_lead", user_data:{email:..., phone_number:...}})']))
   }
 
-  // 5. META
-  if (raw.metaPixelIds.length > 0) {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 5. META (Pixel, CAPI, Advanced Matching)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Detect pixel from HTML or network requests
+  const metaPixelFromHtml = raw.metaPixelIds.length > 0
+  const metaPixelFromNetwork = raw.networkRequests.some(r => r.type === 'meta')
+  const hasMetaPixel = metaPixelFromHtml || metaPixelFromNetwork || !!platform?.meta
+
+  if (hasMetaPixel) {
+    const pixelId = raw.metaPixelIds[0] || platform?.meta?.pixelId || 'détecté via réseau'
+
+    // Pixel presence check
+    if (metaPixelFromHtml) {
+      const isDouble = raw.networkRequests.filter(r => r.type === 'meta' && r.params?.ec === 'double').length > 0
+      if (isDouble) {
+        results.push(warn('m0', `Pixel Meta ${pixelId} — double PageView`, 'meta', ['Meta'],
+          'PageView envoyé 2 fois. Double-comptabilisation probable.',
+          ['Pixel natif ET template GTM simultanément'],
+          ['Supprimer le pixel natif du HTML, garder uniquement GTM'], 'high'))
+      } else {
+        results.push(ok('m0', `Pixel Meta ${pixelId} actif`, 'meta', ['Meta'],
+          `Pixel ${pixelId} détecté et actif.`,
+          [`ID : ${pixelId}`, `Source : ${metaPixelFromHtml ? 'code HTML' : 'réseau'}`], []))
+      }
+    } else {
+      results.push(ok('m0', 'Pixel Meta détecté via réseau', 'meta', ['Meta'],
+        'Requêtes Meta (facebook.com/tr) détectées dans le réseau.',
+        ['Pixel chargé via GTM ou insertion dynamique'], []))
+    }
+
+    // Advanced Matching
     const metaReqs = raw.networkRequests.filter(r => r.type === 'meta')
-    const hasAM = metaReqs.some(r => r.params?.em || r.params?.hme || r.params?.ph)
+    const hasAMScan = metaReqs.some(r => r.params?.em || r.params?.hme || r.params?.ph)
     const apiAM = platform?.meta?.advancedMatchingEnabled
-    if (hasAM || apiAM) {
-      results.push(ok('m1', 'Advanced Matching détecté', 'meta', ['Meta','Advanced Matching'],
-        `Correspondance avancée active${apiAM ? ' (confirmé via API Meta)' : ' (paramètres détectés dans les hits)'}.`, [], []))
+    if (hasAMScan || apiAM) {
+      const source = apiAM && hasAMScan ? 'confirmé via API Meta + signaux navigateur'
+        : apiAM ? 'confirmé via API Meta' : 'paramètres détectés dans les hits'
+      results.push(ok('m1', 'Advanced Matching actif', 'meta', ['Meta','Advanced Matching'],
+        `Correspondance avancée active (${source}).`,
+        [...(apiAM ? ['API Meta : Advanced Matching activé'] : []),
+         ...(hasAMScan ? ['Paramètres em/ph détectés dans les requêtes'] : [])], []))
     } else {
       results.push(fail('m1', 'Advanced Matching non configuré', 'meta', ['Meta','Advanced Matching'],
         'Aucun paramètre em/ph dans les hits Meta.',
-        ['Paramètres em et ph absents'],
+        ['Paramètres em et ph absents', ...(platform?.meta ? [`Pixel ${platform.meta.pixelName} : AM désactivé`] : [])],
         ['Meta Events Manager : pixel > Paramètres > Correspondance avancée > Activer'], 'high'))
     }
 
@@ -241,7 +340,7 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
     const capiViaApi = platform?.meta?.capiConnected === true
     const capiViaScan = raw.hasCAPI
     if (capiViaApi) {
-      const details = [`Pixel ${raw.metaPixelIds[0]} : CAPI confirmée via API Meta`]
+      const details = [`Pixel ${pixelId} : CAPI confirmée via API Meta`]
       if (platform?.meta?.matchRate) details.push(`Match rate : ${platform.meta.matchRate}%`)
       results.push(ok('m2', 'CAPI connectée (vérifié via API Meta)', 'meta', ['Meta','CAPI'],
         'Conversions API active — événements serveur reçus par Meta.',
@@ -252,7 +351,6 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
         ['Connecter Meta pour vérification complète via API'],
         ['Connecter le compte Meta pour confirmer la configuration CAPI']))
     } else if (platform?.meta) {
-      // API connectée mais CAPI non détectée
       results.push(fail('m2', 'CAPI non configurée (vérifié via API Meta)', 'meta', ['Meta','CAPI'],
         `Pixel ${platform.meta.pixelId} : aucun événement serveur détecté. 20-40% de conversions perdues (iOS/AdBlockers).`,
         [`Pixel : ${platform.meta.pixelName}`, 'Aucun événement server-side sur les 7 derniers jours'],
@@ -260,16 +358,44 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
          'Meta Events Manager : ensemble de données > Paramètres > API Conversions > Configurer',
          'Vérifier que le Pixel ID dans GTM SS correspond au bon ensemble de données Meta'], 'high'))
     } else {
-      // Pas d'API connectée, pas de signal scan
       results.push(manual('m2', 'CAPI — vérification manuelle requise', 'meta', ['Meta','CAPI'],
-        'Impossible de vérifier la CAPI sans connexion Meta.',
-        ['La CAPI est server-to-server : invisible depuis le navigateur'],
+        'Impossible de vérifier la CAPI sans connexion Meta. La CAPI est server-to-server : invisible depuis le navigateur.',
+        ['Connecter le compte Meta pour vérification automatique'],
         ['Connecter le compte Meta pour vérifier automatiquement',
          'Ou : Meta Events Manager > ensemble de données > onglet Intégrations > vérifier "API Conversions"']))
     }
+
+    // Meta match rate (from API)
+    if (platform?.meta?.matchRate !== undefined) {
+      if (platform.meta.matchRate >= 60) {
+        results.push(ok('m3', `Match rate Meta : ${platform.meta.matchRate}%`, 'meta', ['Meta','CAPI'],
+          `Excellent match rate : ${platform.meta.matchRate}%. Objectif >60% atteint.`,
+          [`Taux actuel : ${platform.meta.matchRate}%`], []))
+      } else if (platform.meta.matchRate >= 40) {
+        results.push(warn('m3', `Match rate Meta : ${platform.meta.matchRate}%`, 'meta', ['Meta','CAPI'],
+          `Match rate ${platform.meta.matchRate}% (objectif >60%).`,
+          [`Actuel : ${platform.meta.matchRate}%`],
+          ['Ajouter email, téléphone, prénom dans les paramètres AM',
+           'Configurer CAPI pour améliorer le match rate']))
+      } else {
+        results.push(fail('m3', `Match rate Meta : ${platform.meta.matchRate}%`, 'meta', ['Meta','CAPI'],
+          `Match rate faible : ${platform.meta.matchRate}%. Impact sur l'attribution et l'optimisation.`,
+          [`Actuel : ${platform.meta.matchRate}%`],
+          ['Activer Advanced Matching avec email + téléphone',
+           'Configurer CAPI si ce n\'est pas fait'], 'high'))
+      }
+    }
+  } else {
+    results.push(warn('m0', 'Pixel Meta non détecté', 'meta', ['Meta'],
+      'Aucun pixel Meta détecté sur cette page.',
+      [],
+      ['Installer via GTM (template Meta Pixel officiel)']))
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
   // 6. GTM CHECKS (via API)
+  // ═══════════════════════════════════════════════════════════════════════════
+
   if (gtmData) {
     const c = gtmData.checks
 
@@ -300,7 +426,7 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       results.push(ok('gtm3', `Tag Meta Pixel dans GTM`, 'meta', ['Meta','GTM'],
         `Pixel${c.metaPixelId ? ` ${c.metaPixelId}` : ''} configuré dans GTM.`,
         [c.metaPixelTagName || ''], []))
-    } else if (raw.metaPixelIds.length > 0) {
+    } else if (hasMetaPixel) {
       results.push(warn('gtm3', 'Pixel Meta hors GTM (code en dur)', 'meta', ['Meta','GTM'],
         'Pixel dans le HTML directement, pas via GTM.',
         ['Moins flexible, risque de double comptage'],
@@ -351,7 +477,10 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
           `${c.totalTagCount} tags. Volume nominal.`, [], []))
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
   // 7. QA
+  // ═══════════════════════════════════════════════════════════════════════════
+
   if (raw.jsErrors.length > 0) {
     results.push(fail('q1', `${raw.jsErrors.length} erreur(s) JS`, 'qa', ['QA'],
       `Erreurs : ${raw.jsErrors.slice(0,2).join('; ')}.`,
@@ -361,7 +490,10 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
       'Console JS propre.', [], []))
   }
 
-  // Platform data
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 8. DONNÉES PLATEFORMES (via API connectées)
+  // ═══════════════════════════════════════════════════════════════════════════
+
   if (platform?.ga4) {
     const g = platform.ga4
     if (g.conversionEvents.length === 0) {
@@ -378,19 +510,6 @@ export function analyzeTrackingData(raw: ScanRawData, platform?: PlatformData, g
 
   if (platform?.meta) {
     const m = platform.meta
-    if (!m.advancedMatchingEnabled) {
-      results.push(fail('p2', 'Advanced Matching désactivé (API Meta)', 'meta', ['Meta','Platform','Advanced Matching'],
-        `Pixel ${m.pixelId} : Advanced Matching non activé.`,
-        [`Pixel : ${m.pixelName}`],
-        ['Meta Events Manager : pixel > Paramètres > Correspondance avancée > Activer']))
-    }
-    if (m.matchRate !== undefined && m.matchRate < 40) {
-      results.push(warn('p3', `Match rate Meta : ${m.matchRate}%`, 'meta', ['Meta','Platform'],
-        `Match rate ${m.matchRate}% (objectif >60%).`,
-        [`Actuel : ${m.matchRate}%`],
-        ['Ajouter email, téléphone, prénom dans les paramètres AM',
-         'Configurer CAPI pour améliorer le match rate']))
-    }
     if (m.capiConnected) {
       results.push(ok('p4', 'CAPI active (API Meta)', 'meta', ['Meta','Platform','CAPI'],
         `Pixel ${m.pixelId} : événements serveur confirmés par Meta.`,

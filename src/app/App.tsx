@@ -16,7 +16,7 @@ const ST = {
 const CAT_LABELS: Record<string, string> = {
   consent: '🔒 Consentement & RGPD',
   tag_base: '🏷️ Taggage de base',
-  ga4: '📊 GA4 & Analytics',
+  ga4: '📊 Analytics',
   google_ads: '⚡ Google Ads',
   meta: '🎯 Meta',
   qa: '✅ Qualité & QA',
