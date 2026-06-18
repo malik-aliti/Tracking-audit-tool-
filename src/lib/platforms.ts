@@ -256,13 +256,50 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
     ;(bizData.data || []).forEach((biz: any) => { if (biz.owned_pixels?.data) pixels.push(...biz.owned_pixels.data) })
     if (!pixels.length) return null
     const pixel = pixelId ? pixels.find(p => p.id === pixelId) || pixels[0] : pixels[0]
-    const eventsRes = await fetch(`https://graph.facebook.com/v20.0/${pixel.id}/stats?aggregation=event&start_time=${Math.floor(Date.now()/1000)-7*24*3600}&end_time=${Math.floor(Date.now()/1000)}&access_token=${accessToken}`)
+
+    const now = Math.floor(Date.now() / 1000)
+    const weekAgo = now - 7 * 24 * 3600
+
+    // Fetch browser-side event stats
+    const eventsRes = await fetch(`https://graph.facebook.com/v20.0/${pixel.id}/stats?aggregation=event&start_time=${weekAgo}&end_time=${now}&access_token=${accessToken}`)
     const eventsData = eventsRes.ok ? await eventsRes.json() : { data: [] }
     const eventStats = (eventsData.data || []).map((e: any) => ({ name: e.event || '', count: e.count || 0, matchRate: e.match_rate_approx }))
+
+    // Detect CAPI: check for server-side events on this pixel/dataset
+    let capiConnected = false
+    let serverEventCount = 0
+    let matchRate: number | undefined
+    try {
+      const serverStatsRes = await fetch(
+        `https://graph.facebook.com/v20.0/${pixel.id}/stats?aggregation=event&event_source=server&start_time=${weekAgo}&end_time=${now}&access_token=${accessToken}`
+      )
+      if (serverStatsRes.ok) {
+        const serverData = await serverStatsRes.json()
+        const serverEvents = serverData.data || []
+        serverEventCount = serverEvents.reduce((sum: number, e: any) => sum + (e.count || 0), 0)
+        if (serverEventCount > 0) capiConnected = true
+        const rates = serverEvents.filter((e: any) => e.match_rate_approx != null).map((e: any) => e.match_rate_approx)
+        if (rates.length) matchRate = Math.round(rates.reduce((a: number, b: number) => a + b, 0) / rates.length)
+      }
+    } catch {}
+
+    // Fallback: check dataset setup info for server_events_business_ids
+    if (!capiConnected) {
+      try {
+        const setupRes = await fetch(
+          `https://graph.facebook.com/v20.0/${pixel.id}?fields=id,server_events_business_ids&access_token=${accessToken}`
+        )
+        if (setupRes.ok) {
+          const setupData = await setupRes.json()
+          if (setupData.server_events_business_ids?.length > 0) capiConnected = true
+        }
+      } catch {}
+    }
+
     return {
       pixelId: pixel.id, pixelName: pixel.name || `Pixel ${pixel.id}`,
       advancedMatchingEnabled: !!(pixel.advanced_matching_fields?.length > 0),
-      capiConnected: false, matchRate: undefined, eventStats,
+      capiConnected, matchRate, eventStats,
       recentEvents: eventStats.map((e: any) => e.name), qualityScore: undefined,
     }
   } catch (err) { console.error('Meta error:', err); return null }
