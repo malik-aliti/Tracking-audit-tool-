@@ -415,26 +415,51 @@ function buildChecks(
     t.name.toLowerCase().includes('page view')
   )
 
-  // GA4 Config tag — match by type first, but EXCLUDE tags whose name indicates Meta/FB
-  const isMetaName = (name: string) => {
-    const n = name.toLowerCase()
-    return n.includes('fb_') || n.includes('facebook') || n.includes('conversions_api') || n.includes('capi') || n.includes('meta pixel')
-  }
-  const ga4Tag = tags.find(t => (t.type === 'googtag' || t.type === 'gaawc') && !isMetaName(t.name))
-    || tags.find(t => {
-      const n = t.name.toLowerCase()
-      return !isMetaName(t.name) && (n.includes('ga4') || n.includes('google analytics 4') || n.includes('google tag'))
-    })
-  const ga4MeasurementId = ga4Tag?.parameter?.find(p => p.key === 'tagId' || p.key === 'measurementId')?.value || null
+  // Log all tag types for debugging
+  console.log(`[GTM Web buildChecks] Tags:`, tags.map(t => `"${t.name}" (type=${t.type})`))
 
-  // Meta Pixel tag — match by type first, then by name (excluding GA4-only tags)
-  const metaTag = tags.find(t => t.type === 'fbpixel' || t.type === 'facebook_pixel')
-    || tags.find(t => {
+  // Known GA4/Google tag types in GTM API
+  const GA4_TYPES = new Set(['googtag', 'gaawc', 'gaawe', 'ga4_config', 'ga4_event'])
+  // Known Meta/FB tag types in GTM API (community templates have varied type strings)
+  const META_TYPES = new Set(['fbpixel', 'facebook_pixel', 'cvt_temp_public_id'])
+
+  // Step 1: Classify each tag by its TYPE first
+  const ga4TypeTags = tags.filter(t => GA4_TYPES.has(t.type))
+  const metaTypeTags = tags.filter(t => META_TYPES.has(t.type))
+
+  // Step 2: For GA4, pick the tag whose type is GA4 AND whose name doesn't indicate Meta/FB
+  // If all GA4-type tags have FB names, still use the one without FB in the name
+  let ga4Tag = ga4TypeTags.find(t => {
+    const n = t.name.toLowerCase()
+    return !n.includes('fb_') && !n.includes('conversions_api')
+  }) || ga4TypeTags[0] || null
+
+  // Step 3: For Meta, pick by type first. If no type match, fall back to name-based detection
+  let metaTag = metaTypeTags[0] || null
+  if (!metaTag) {
+    // Fallback: look for tags with FB/Meta in name that are NOT GA4-typed
+    metaTag = tags.find(t => {
+      if (GA4_TYPES.has(t.type)) return false
       const n = t.name.toLowerCase()
-      const isGa4Only = t.type === 'googtag' || t.type === 'gaawc'
-      return !isGa4Only && (n.includes('fb_') || n.includes('meta pixel') || n.includes('facebook pixel'))
+      return n.includes('fb_') || n.includes('meta pixel') || n.includes('facebook pixel')
+    }) || null
+  }
+
+  // Step 4: If ga4Tag was matched but has a Meta/FB name, AND there's another tag with a clean GA4 name, prefer the clean one
+  if (ga4Tag && ga4Tag.name.toLowerCase().includes('fb_')) {
+    const cleanGa4 = tags.find(t => {
+      const n = t.name.toLowerCase()
+      return (GA4_TYPES.has(t.type) || n.includes('ga4') || n.includes('google analytics') || n.includes('google tag'))
+        && !n.includes('fb_') && !n.includes('conversions_api') && !n.includes('capi')
+        && t.tagId !== ga4Tag!.tagId
     })
+    if (cleanGa4) ga4Tag = cleanGa4
+  }
+
+  const ga4MeasurementId = ga4Tag?.parameter?.find(p => p.key === 'tagId' || p.key === 'measurementId')?.value || null
   const metaPixelId = metaTag?.parameter?.find(p => p.key === 'pixelId' || p.key === 'pixel_id')?.value || null
+
+  console.log(`[GTM Web] GA4 tag: "${ga4Tag?.name}" (type=${ga4Tag?.type}), Meta tag: "${metaTag?.name}" (type=${metaTag?.type})`)
 
   const convLinker = tags.find(t =>
     t.type === 'gclidw' || t.type === 'awconv' ||
