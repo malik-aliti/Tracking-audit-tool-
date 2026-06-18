@@ -31,7 +31,7 @@ export async function exchangeGoogleCode(code: string) {
   return tokens
 }
 
-export async function fetchGA4Data(accessToken: string, propertyId?: string): Promise<GA4Data | null> {
+export async function fetchGA4Data(accessToken: string, propertyId?: string, measurementIdHint?: string): Promise<GA4Data | null> {
   try {
     const oauth2Client = getGoogleOAuthClient()
     oauth2Client.setCredentials({ access_token: accessToken })
@@ -43,8 +43,32 @@ export async function fetchGA4Data(accessToken: string, propertyId?: string): Pr
       const propsRes = await analyticsAdmin.properties.list({ filter: 'parent:accounts/-' })
       const props = propsRes.data.properties || []
       if (!props.length) return null
-      pid = props[0].name?.replace('properties/', '') || ''
-      propertyName = props[0].displayName || ''
+
+      // If we have a Measurement ID hint (from GTM config tag), find the matching property
+      if (measurementIdHint) {
+        for (const prop of props) {
+          const propId = prop.name?.replace('properties/', '') || ''
+          try {
+            const streamsRes = await analyticsAdmin.properties.dataStreams.list({ parent: `properties/${propId}` })
+            const match = (streamsRes.data.dataStreams || []).find(s =>
+              s.webStreamData?.measurementId === measurementIdHint
+            )
+            if (match) {
+              pid = propId
+              propertyName = prop.displayName || ''
+              console.log(`[GA4] Matched property ${propId} (${propertyName}) via Measurement ID ${measurementIdHint}`)
+              break
+            }
+          } catch {}
+        }
+      }
+
+      // Fallback: use first property
+      if (!pid) {
+        pid = props[0].name?.replace('properties/', '') || ''
+        propertyName = props[0].displayName || ''
+        console.log(`[GA4] No measurement ID match, using first property: ${pid} (${propertyName})`)
+      }
     }
     const streamsRes = await analyticsAdmin.properties.dataStreams.list({ parent: `properties/${pid}` })
     const streams = (streamsRes.data.dataStreams || []).map(s => ({

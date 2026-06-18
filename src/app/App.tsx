@@ -372,8 +372,12 @@ export default function Home() {
         }
         if (connections.meta?.accessToken) {
           try {
+            // Priority: GTM SS CAPI pixel ID > GTM Web pixel ID > scan pixel ID
+            const gtmSSPixelId = (gtmData?.checks as any)?.server?.metaCAPIPixelId
+            const gtmWebPixelId = gtmData?.checks?.metaPixelId
             const scanPixelId = scanJson.data?.metaPixelIds?.[0]
-            const r = await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken, pixelId: scanPixelId }) })
+            const resolvedPixelId = gtmSSPixelId || gtmWebPixelId || scanPixelId
+            const r = await fetch('/api/meta/pixel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessToken: connections.meta.accessToken, pixelId: resolvedPixelId }) })
             const j = await r.json()
             if (j.success) platformData = { ...platformData, meta: j.meta }
           } catch {}
@@ -455,11 +459,15 @@ export default function Home() {
 
       if (connections.meta?.accessToken) {
         try {
+          // Priority: GTM SS CAPI pixel ID > GTM Web pixel ID > scan pixel ID
+          const gtmSSPixelId = (gtmData?.checks as any)?.server?.metaCAPIPixelId
+          const gtmWebPixelId = gtmData?.checks?.metaPixelId
           const scanPixelId = scanData.metaPixelIds?.[0]
+          const resolvedPixelId = gtmSSPixelId || gtmWebPixelId || scanPixelId
           const mRes = await fetch('/api/meta/pixel', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken: connections.meta.accessToken, pixelId: scanPixelId }),
+            body: JSON.stringify({ accessToken: connections.meta.accessToken, pixelId: resolvedPixelId }),
           })
           const mJson = await mRes.json()
           if (mJson.success) {
