@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     const { scanData, platformData, gtmData, scanPixelIds }: { scanData: ScanRawData; platformData?: PlatformData; gtmData?: GTMData; scanPixelIds?: string[] } = await req.json()
     const checks = analyzeTrackingData(scanData, platformData, gtmData)
     const score = calculateScore(checks)
-    const aiSummary = await generateAISummary(scanData, checks, score, gtmData)
+    const aiSummary = await generateAISummary(scanData, checks, score, gtmData, platformData)
     const report: AuditReport = {
       id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       url: scanData.url, createdAt: new Date().toISOString(),
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function generateAISummary(raw: ScanRawData, checks: any[], score: any, gtmData?: GTMData): Promise<AISummary> {
+async function generateAISummary(raw: ScanRawData, checks: any[], score: any, gtmData?: GTMData, platformData?: PlatformData): Promise<AISummary> {
   const failChecks = checks.filter((c: any) => c.status === 'fail')
   const critChecks = checks.filter((c: any) => c.impact === 'critical')
   const gtmSummary = gtmData ? `GTM API: ${gtmData.checks.totalTagCount} tags, ${gtmData.checks.pausedTags.length} en pause, ${gtmData.checks.tagsWithoutTrigger.length} sans déclencheur, Consent template: ${gtmData.checks.hasConsentModeTemplate ? gtmData.checks.consentModeTemplateName : 'absent'}` : 'GTM non connecté'
