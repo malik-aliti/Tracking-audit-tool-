@@ -371,6 +371,12 @@ export async function fetchGTMData(
     }
 
     console.log(`[GTM] Web: ${webContainer?.publicId || 'none'} (${webResult?.tags.length || 0} tags), Server: ${serverContainer?.publicId || 'none'} (${serverResult?.tags.length || 0} tags)`)
+    if (serverResult) {
+      console.log(`[GTM SS Tags]`, serverResult.tags.map(t => `${t.name} (type: ${t.type})`))
+    }
+    if (webResult) {
+      console.log(`[GTM Web Tags]`, webResult.tags.map(t => `${t.name} (type: ${t.type})`))
+    }
 
     return {
       accountId: matchedAccountId,
@@ -409,20 +415,22 @@ function buildChecks(
     t.name.toLowerCase().includes('page view')
   )
 
-  const ga4Tag = tags.find(t =>
-    t.type === 'googtag' || t.type === 'gaawc' ||
-    t.name.toLowerCase().includes('ga4') ||
-    t.name.toLowerCase().includes('google analytics 4') ||
-    t.name.toLowerCase().includes('google tag')
-  )
+  // GA4 Config tag — match by type first, then by name (excluding Meta/FB tags)
+  const ga4Tag = tags.find(t => t.type === 'googtag' || t.type === 'gaawc')
+    || tags.find(t => {
+      const n = t.name.toLowerCase()
+      const isMeta = n.includes('fb_') || n.includes('facebook') || n.includes('conversions_api') || n.includes('capi')
+      return !isMeta && (n.includes('ga4') || n.includes('google analytics 4') || n.includes('google tag'))
+    })
   const ga4MeasurementId = ga4Tag?.parameter?.find(p => p.key === 'tagId' || p.key === 'measurementId')?.value || null
 
-  const metaTag = tags.find(t =>
-    t.type === 'fbpixel' || t.type === 'facebook_pixel' ||
-    t.name.toLowerCase().includes('meta') ||
-    t.name.toLowerCase().includes('facebook') ||
-    t.name.toLowerCase().includes('pixel')
-  )
+  // Meta Pixel tag — match by type first, then by name (excluding GA4-only tags)
+  const metaTag = tags.find(t => t.type === 'fbpixel' || t.type === 'facebook_pixel')
+    || tags.find(t => {
+      const n = t.name.toLowerCase()
+      const isGa4Only = t.type === 'googtag' || t.type === 'gaawc'
+      return !isGa4Only && (n.includes('fb_') || n.includes('meta pixel') || n.includes('facebook pixel'))
+    })
   const metaPixelId = metaTag?.parameter?.find(p => p.key === 'pixelId' || p.key === 'pixel_id')?.value || null
 
   const convLinker = tags.find(t =>
@@ -534,29 +542,35 @@ function buildServerChecks(
   variables: GTMVariable[]
 ): GTMServerChecks {
 
-  // GA4 Server tag (sGTM)
-  const ga4ServerTag = tags.find(t =>
-    t.type === 'sgtmgaaw' || t.type === 'sgtmga4' ||
-    t.type?.includes('ga4') ||
-    t.name.toLowerCase().includes('ga4') ||
-    t.name.toLowerCase().includes('google analytics')
-  )
-
-  // Meta CAPI tag — look for Meta/Facebook conversion API tags
-  const metaCAPITag = tags.find(t =>
-    t.type === 'sgtmfb' || t.type === 'sgtm_facebook' ||
-    t.type?.toLowerCase().includes('facebook') ||
-    t.type?.toLowerCase().includes('meta') ||
-    t.type?.toLowerCase().includes('capi') ||
-    t.name.toLowerCase().includes('meta') ||
-    t.name.toLowerCase().includes('facebook') ||
-    t.name.toLowerCase().includes('capi') ||
-    t.name.toLowerCase().includes('conversion api')
-  )
-  // Try to extract the pixel ID from the Meta CAPI tag parameters
+  // Meta CAPI tag — detect FIRST to exclude from GA4 matching
+  // Types: community templates vary but names/types contain facebook, meta, capi, conversions_api, fb_conversions
+  const metaCAPITag = tags.find(t => {
+    const type = (t.type || '').toLowerCase()
+    const name = t.name.toLowerCase()
+    return type.includes('facebook') || type.includes('meta') || type.includes('capi')
+      || type.includes('fb_conversions') || type.includes('conversion_api')
+      || name.includes('fb_conversions') || name.includes('conversions_api')
+      || name.includes('capi') || name.includes('conversion api')
+      || (name.includes('meta') && !name.includes('metadata'))
+      || (name.includes('facebook') && name.includes('server'))
+  })
   const metaCAPIPixelId = metaCAPITag?.parameter?.find(p =>
     p.key === 'pixelId' || p.key === 'pixel_id' || p.key === 'pixelid' || p.key === 'datasetId'
-  )?.value || null
+  )?.value
+    // Also try to extract pixel ID from tag name (e.g. FB_CONVERSIONS_API-993896383378275-Server-Tag)
+    || metaCAPITag?.name.match(/(\d{10,})/)?.[1]
+    || null
+
+  // GA4 Server tag (sGTM) — exclude Meta CAPI tags
+  const ga4ServerTag = tags.find(t => {
+    if (metaCAPITag && t.tagId === metaCAPITag.tagId) return false
+    const type = (t.type || '').toLowerCase()
+    const name = t.name.toLowerCase()
+    return type === 'sgtmgaaw' || type === 'sgtmga4' || type.includes('ga4')
+      || type.includes('google_analytics') || type.includes('gaaw')
+      || (name.includes('ga4') && !name.includes('fb_') && !name.includes('conversions_api'))
+      || name.includes('google analytics')
+  })
 
   // Google Ads Server tag
   const gAdsServerTag = tags.find(t =>
