@@ -331,30 +331,41 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
     // ── CAPI Detection: multiple methods ──────────────────────────────
     let capiConnected = false
     let capiEventCount = 0
+    let capiDetectionMethod = ''
     let matchRate: number | undefined
 
+    // Method 0: Check if dataset has is_unified_dataset or data_use_setting indicating server events
+    // Also check for token/access_token fields that indicate CAPI setup
+    try {
+      const setupRes = await fetch(
+        `https://graph.facebook.com/v20.0/${pid}?fields=id,name,is_unified_dataset,data_use_setting,server_events_business_ids,is_created_by_business&access_token=${accessToken}`
+      )
+      if (setupRes.ok) {
+        const setupData = await setupRes.json()
+        console.log(`[Meta CAPI] Dataset ${pid} fields:`, JSON.stringify(setupData))
+        if (setupData.server_events_business_ids?.length > 0) {
+          capiConnected = true
+          capiDetectionMethod = 'server_events_business_ids'
+        }
+        if (setupData.is_unified_dataset) {
+          capiConnected = true
+          capiDetectionMethod = capiDetectionMethod || 'is_unified_dataset'
+        }
+      }
+    } catch {}
+
     // Method 1: Check event stats for server-side indicators (count_capi field)
-    for (const evt of eventStats) {
-      if (evt.countCapi !== undefined && evt.countCapi > 0) {
-        capiConnected = true
-        capiEventCount += evt.countCapi
+    if (!capiConnected) {
+      for (const evt of eventStats) {
+        if (evt.countCapi !== undefined && evt.countCapi > 0) {
+          capiConnected = true
+          capiEventCount += evt.countCapi
+          capiDetectionMethod = 'count_capi in event stats'
+        }
       }
     }
 
-    // Method 2: Check server_events_business_ids on the pixel/dataset
-    if (!capiConnected) {
-      try {
-        const setupRes = await fetch(
-          `https://graph.facebook.com/v20.0/${pid}?fields=server_events_business_ids&access_token=${accessToken}`
-        )
-        if (setupRes.ok) {
-          const setupData = await setupRes.json()
-          if (setupData.server_events_business_ids?.length > 0) capiConnected = true
-        }
-      } catch {}
-    }
-
-    // Method 3: Check da_checks diagnostic endpoint
+    // Method 2: Check da_checks diagnostic endpoint
     if (!capiConnected) {
       try {
         const daRes = await fetch(
@@ -362,11 +373,13 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
         )
         if (daRes.ok) {
           const daData = await daRes.json()
+          console.log(`[Meta CAPI] da_checks for ${pid}:`, JSON.stringify(daData).slice(0, 500))
           const checks = daData.data || []
           for (const check of checks) {
             const desc = JSON.stringify(check).toLowerCase()
-            if (desc.includes('server') || desc.includes('capi') || desc.includes('api_conversion')) {
+            if (desc.includes('server') || desc.includes('capi') || desc.includes('api_conversion') || desc.includes('conversions_api')) {
               capiConnected = true
+              capiDetectionMethod = 'da_checks'
               break
             }
           }
@@ -374,7 +387,7 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
       } catch {}
     }
 
-    // Method 4: Query stats aggregated by event_source (may not exist on all API versions)
+    // Method 3: Query stats with event_source=SERVER
     if (!capiConnected) {
       try {
         const srcRes = await fetch(
@@ -382,15 +395,18 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
         )
         if (srcRes.ok) {
           const srcData = await srcRes.json()
+          console.log(`[Meta CAPI] Server events for ${pid}:`, JSON.stringify(srcData).slice(0, 300))
           const serverEvents = srcData.data || []
           capiEventCount = serverEvents.reduce((sum: number, e: any) => sum + (e.count || 0), 0)
-          if (capiEventCount > 0) capiConnected = true
+          if (capiEventCount > 0) {
+            capiConnected = true
+            capiDetectionMethod = 'server event stats'
+          }
         }
       } catch {}
     }
 
-    // Method 5: Match rate heuristic — high match rates strongly suggest CAPI
-    // Browser-only typically yields 20-30% match rate; CAPI pushes it to 60-90%
+    // Method 4: Match rate heuristic — high match rates strongly suggest CAPI
     const rates = eventStats.filter((e: any) => e.matchRate != null && e.count > 10).map((e: any) => e.matchRate)
     if (rates.length > 0) {
       matchRate = Math.round(rates.reduce((a: number, b: number) => a + b, 0) / rates.length)
@@ -401,7 +417,7 @@ export async function fetchMetaData(accessToken: string, pixelId?: string): Prom
 
     const advancedMatchingEnabled = advancedMatchingFields.length > 0
 
-    console.log(`[Meta CAPI Detection] Pixel ${pid}: capiConnected=${capiConnected}, capiEventCount=${capiEventCount}, matchRate=${matchRate}, methods tried: 5`)
+    console.log(`[Meta CAPI Detection] Pixel ${pid}: capiConnected=${capiConnected}, method=${capiDetectionMethod || 'none'}, capiEventCount=${capiEventCount}, matchRate=${matchRate}`)
 
     return {
       pixelId: pid!, pixelName: pixelName || `Pixel ${pid}`,

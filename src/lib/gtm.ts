@@ -415,12 +415,15 @@ function buildChecks(
     t.name.toLowerCase().includes('page view')
   )
 
-  // GA4 Config tag — match by type first, then by name (excluding Meta/FB tags)
-  const ga4Tag = tags.find(t => t.type === 'googtag' || t.type === 'gaawc')
+  // GA4 Config tag — match by type first, but EXCLUDE tags whose name indicates Meta/FB
+  const isMetaName = (name: string) => {
+    const n = name.toLowerCase()
+    return n.includes('fb_') || n.includes('facebook') || n.includes('conversions_api') || n.includes('capi') || n.includes('meta pixel')
+  }
+  const ga4Tag = tags.find(t => (t.type === 'googtag' || t.type === 'gaawc') && !isMetaName(t.name))
     || tags.find(t => {
       const n = t.name.toLowerCase()
-      const isMeta = n.includes('fb_') || n.includes('facebook') || n.includes('conversions_api') || n.includes('capi')
-      return !isMeta && (n.includes('ga4') || n.includes('google analytics 4') || n.includes('google tag'))
+      return !isMetaName(t.name) && (n.includes('ga4') || n.includes('google analytics 4') || n.includes('google tag'))
     })
   const ga4MeasurementId = ga4Tag?.parameter?.find(p => p.key === 'tagId' || p.key === 'measurementId')?.value || null
 
