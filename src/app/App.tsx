@@ -72,7 +72,13 @@ function CopyBtn({ text }: { text: string }) {
 }
 
 // ─── Connection status badge ──────────────────────────────────────────────────
-function PlatformBadge({ name, icon, connected, onConnect }: { name: string; icon: string; connected: boolean; onConnect: () => void }) {
+const PLATFORM_LOGOS: Record<string, JSX.Element> = {
+  Google: <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59a14.5 14.5 0 010-9.18l-7.98-6.19a24.01 24.01 0 000 21.56l7.98-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>,
+  Meta: <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#1877F2" d="M48 24C48 10.745 37.255 0 24 0S0 10.745 0 24c0 11.979 8.776 21.908 20.25 23.708v-16.77h-6.094V24h6.094v-5.288c0-6.014 3.583-9.337 9.065-9.337 2.625 0 5.372.469 5.372.469v5.906h-3.026c-2.981 0-3.911 1.85-3.911 3.75V24h6.656l-1.064 6.938H27.75v16.77C39.224 45.908 48 35.979 48 24z"/></svg>,
+  LinkedIn: <svg width="16" height="16" viewBox="0 0 48 48"><rect width="48" height="48" rx="4" fill="#0A66C2"/><path fill="#fff" d="M11.5 20h5v16h-5V20zm2.5-8a3 3 0 110 6 3 3 0 010-6zm8 8h4.8v2.2h.07c.67-1.27 2.3-2.6 4.73-2.6 5.07 0 6 3.33 6 7.67V36h-5v-7.5c0-1.79-.03-4.1-2.5-4.1s-2.88 1.96-2.88 3.97V36h-5.02V20z"/></svg>,
+}
+
+function PlatformBadge({ name, connected, onConnect }: { name: string; connected: boolean; onConnect: () => void }) {
   return (
     <button onClick={onConnect} style={{
       display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
@@ -81,7 +87,7 @@ function PlatformBadge({ name, icon, connected, onConnect }: { name: string; ico
       borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600,
       color: connected ? '#166534' : '#64748b', transition: 'all .2s',
     }}>
-      <span style={{ fontSize: 14 }}>{icon}</span>
+      {PLATFORM_LOGOS[name] || <span style={{ fontSize: 14 }}>●</span>}
       {name}
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: connected ? '#22c55e' : '#cbd5e1', flexShrink: 0 }} />
     </button>
@@ -496,9 +502,9 @@ export default function Home() {
             <div style={{ fontSize: 10, color: '#64748b' }}>Diagnostic de tracking • RGPD • GA4 • Google Ads • Meta • LinkedIn Ads</div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <PlatformBadge name="Google" icon="🔵" connected={!!connections.google} onConnect={connectGoogle} />
-            <PlatformBadge name="Meta" icon="🔷" connected={!!connections.meta} onConnect={connectMeta} />
-            <PlatformBadge name="LinkedIn" icon="💼" connected={!!connections.linkedin} onConnect={connectLinkedIn} />
+            <PlatformBadge name="Google" connected={!!connections.google} onConnect={connectGoogle} />
+            <PlatformBadge name="Meta" connected={!!connections.meta} onConnect={connectMeta} />
+            <PlatformBadge name="LinkedIn" connected={!!connections.linkedin} onConnect={connectLinkedIn} />
           </div>
         </div>
       </div>
@@ -672,7 +678,7 @@ export default function Home() {
                 {/* Google */}
                 <div style={{ background: 'white', border: '0.5px solid #e2e8f0', borderRadius: 12, padding: '18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                    <div style={{ fontSize: 24 }}>🔵</div>
+                    <div style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{PLATFORM_LOGOS.Google}</div>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Google</div>
                       <div style={{ fontSize: 10, color: '#64748b' }}>GA4 + Google Ads</div>
@@ -700,7 +706,7 @@ export default function Home() {
                 {/* Meta */}
                 <div style={{ background: 'white', border: '0.5px solid #e2e8f0', borderRadius: 12, padding: '18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                    <div style={{ fontSize: 24 }}>🔷</div>
+                    <div style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{PLATFORM_LOGOS.Meta}</div>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Meta</div>
                       <div style={{ fontSize: 10, color: '#64748b' }}>Pixel + CAPI + Advanced Matching</div>
@@ -732,7 +738,7 @@ export default function Home() {
                 {/* LinkedIn */}
                 <div style={{ background: 'white', border: '0.5px solid #e2e8f0', borderRadius: 12, padding: '18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                    <div style={{ fontSize: 24 }}>💼</div>
+                    <div style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{PLATFORM_LOGOS.LinkedIn}</div>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>LinkedIn</div>
                       <div style={{ fontSize: 10, color: '#64748b' }}>LinkedIn Ads · Campaign Manager</div>

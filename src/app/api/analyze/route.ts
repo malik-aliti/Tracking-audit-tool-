@@ -49,7 +49,8 @@ Réponds UNIQUEMENT en JSON (sans backticks):
       model: 'claude-sonnet-4-6', max_tokens: 700,
       messages: [{ role: 'user', content: prompt }],
     })
-    const text = response.content.find((b: any) => b.type === 'text')?.text || '{}'
+    const textBlock = response.content.find((b) => b.type === 'text')
+    const text = (textBlock && 'text' in textBlock ? textBlock.text : '{}') as string
     return JSON.parse(text.replace(/```json|```/g, '').trim())
   } catch {
     return {

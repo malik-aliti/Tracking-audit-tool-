@@ -220,8 +220,8 @@ export async function fetchGTMData(accessToken: string, targetContainerId?: stri
       const versionsRes = await tagmanager.accounts.containers.versions.live({
         parent: `accounts/${accountId}/containers/${cid}`,
       })
-      lastVersionDate = versionsRes.data.version?.fingerprint || null
-      lastVersionName = versionsRes.data.version?.name || null
+      lastVersionDate = (versionsRes.data as any).version?.fingerprint || null
+      lastVersionName = (versionsRes.data as any).version?.name || null
     } catch {}
 
     // 8. Build checks

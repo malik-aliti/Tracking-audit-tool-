@@ -76,7 +76,7 @@ export async function fetchGA4Data(accessToken: string, propertyId?: string): Pr
       pageChangesEnabled: false, formInteractionsEnabled: false,
     }
     try {
-      const emRes = await analyticsAdmin.properties.dataStreams.getEnhancedMeasurementSettings({
+      const emRes = await (analyticsAdmin.properties.dataStreams as any).getEnhancedMeasurementSettings({
         name: `properties/${pid}/dataStreams/${streams[0]?.id}/enhancedMeasurementSettings`,
       })
       const em = emRes.data
