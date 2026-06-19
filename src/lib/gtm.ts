@@ -399,6 +399,48 @@ export async function fetchGTMData(
   }
 }
 
+// ─── Parameter-based tag classification ─────────────────────────────────────
+// The ONLY reliable way to classify GTM tags — community templates have
+// unpredictable type strings, so we inspect parameters to determine what
+// platform a tag belongs to.
+
+const KNOWN_GA4_TYPES = new Set(['googtag', 'gaawc', 'gaawe', 'ga4_config', 'ga4_event'])
+const KNOWN_GADS_TYPES = new Set(['awct', 'gclidw', 'awconv', 'google_ads_conversion'])
+const KNOWN_META_TYPES = new Set(['fbpixel', 'facebook_pixel'])
+
+function getParamValue(tag: GTMTag, key: string): string | undefined {
+  return tag.parameter?.find(p => p.key === key)?.value
+}
+
+function hasParam(tag: GTMTag, key: string): boolean {
+  return tag.parameter?.some(p => p.key === key) || false
+}
+
+type TagPlatform = 'ga4' | 'meta' | 'gads' | 'consent' | 'conversion_linker' | 'unknown'
+
+function classifyTag(tag: GTMTag): TagPlatform {
+  // 1. Parameter-based detection (most reliable)
+  const tagId = getParamValue(tag, 'tagId') || getParamValue(tag, 'measurementId') || ''
+  const pixelId = getParamValue(tag, 'pixelId') || getParamValue(tag, 'pixel_id') || ''
+  const conversionId = getParamValue(tag, 'conversionId') || getParamValue(tag, 'conversion_id') || ''
+
+  if (pixelId) return 'meta'
+  if (tagId.startsWith('G-') || tagId.startsWith('GT-')) return 'ga4'
+  if (conversionId.startsWith('AW-') || tagId.startsWith('AW-')) return 'gads'
+
+  // 2. Known built-in type codes (secondary)
+  if (KNOWN_GA4_TYPES.has(tag.type) && !pixelId) return 'ga4'
+  if (KNOWN_GADS_TYPES.has(tag.type)) return 'gads'
+  if (KNOWN_META_TYPES.has(tag.type)) return 'meta'
+  if (tag.type === 'gclidw') return 'conversion_linker'
+
+  // 3. Type string hints for community templates
+  const type = (tag.type || '').toLowerCase()
+  if (type.includes('consent') || type.includes('cmp')) return 'consent'
+
+  return 'unknown'
+}
+
 // ─── Build checks for WEB container ─────────────────────────────────────────
 function buildChecks(
   tags: GTMTag[],
@@ -415,85 +457,52 @@ function buildChecks(
     t.name.toLowerCase().includes('page view')
   )
 
-  // Log all tag types for debugging
-  console.log(`[GTM Web buildChecks] Tags:`, tags.map(t => `"${t.name}" (type=${t.type})`))
+  // Classify all tags by parameters
+  const classified = tags.map(t => ({ tag: t, platform: classifyTag(t) }))
+  console.log(`[GTM Web] Classified tags:`, classified.map(c => `"${c.tag.name}" → ${c.platform} (type=${c.tag.type})`))
 
-  // Known GA4/Google tag types in GTM API
-  const GA4_TYPES = new Set(['googtag', 'gaawc', 'gaawe', 'ga4_config', 'ga4_event'])
-  // Known Meta/FB tag types in GTM API (community templates have varied type strings)
-  const META_TYPES = new Set(['fbpixel', 'facebook_pixel', 'cvt_temp_public_id'])
+  // GA4 config tag
+  const ga4Tags = classified.filter(c => c.platform === 'ga4').map(c => c.tag)
+  const ga4Tag = ga4Tags[0] || null
+  const ga4MeasurementId = ga4Tag
+    ? (getParamValue(ga4Tag, 'tagId') || getParamValue(ga4Tag, 'measurementId') || null)
+    : null
 
-  // Step 1: Classify each tag by its TYPE first
-  const ga4TypeTags = tags.filter(t => GA4_TYPES.has(t.type))
-  const metaTypeTags = tags.filter(t => META_TYPES.has(t.type))
+  // Meta Pixel tag
+  const metaTags = classified.filter(c => c.platform === 'meta').map(c => c.tag)
+  const metaTag = metaTags[0] || null
+  const metaPixelId = metaTag
+    ? (getParamValue(metaTag, 'pixelId') || getParamValue(metaTag, 'pixel_id') || null)
+    : null
 
-  // Step 2: For GA4, pick the tag whose type is GA4 AND whose name doesn't indicate Meta/FB
-  // If all GA4-type tags have FB names, still use the one without FB in the name
-  let ga4Tag = ga4TypeTags.find(t => {
-    const n = t.name.toLowerCase()
-    return !n.includes('fb_') && !n.includes('conversions_api')
-  }) || ga4TypeTags[0] || null
+  console.log(`[GTM Web] GA4 tag: "${ga4Tag?.name}" (mid=${ga4MeasurementId}), Meta tag: "${metaTag?.name}" (pid=${metaPixelId})`)
 
-  // Step 3: For Meta, pick by type first. If no type match, fall back to name-based detection
-  let metaTag = metaTypeTags[0] || null
-  if (!metaTag) {
-    // Fallback: look for tags with FB/Meta in name that are NOT GA4-typed
-    metaTag = tags.find(t => {
-      if (GA4_TYPES.has(t.type)) return false
-      const n = t.name.toLowerCase()
-      return n.includes('fb_') || n.includes('meta pixel') || n.includes('facebook pixel')
-    }) || null
-  }
+  // Conversion Linker
+  const convLinker = classified.find(c => c.platform === 'conversion_linker')?.tag
+    || tags.find(t => t.name.toLowerCase().includes('conversion linker') || t.name.toLowerCase().includes('linker'))
 
-  // Step 4: If ga4Tag was matched but has a Meta/FB name, AND there's another tag with a clean GA4 name, prefer the clean one
-  if (ga4Tag && ga4Tag.name.toLowerCase().includes('fb_')) {
-    const cleanGa4 = tags.find(t => {
-      const n = t.name.toLowerCase()
-      return (GA4_TYPES.has(t.type) || n.includes('ga4') || n.includes('google analytics') || n.includes('google tag'))
-        && !n.includes('fb_') && !n.includes('conversions_api') && !n.includes('capi')
-        && t.tagId !== ga4Tag!.tagId
-    })
-    if (cleanGa4) ga4Tag = cleanGa4
-  }
+  // Google Ads tags
+  const gAdsTags = classified.filter(c => c.platform === 'gads').map(c => c.tag)
 
-  const ga4MeasurementId = ga4Tag?.parameter?.find(p => p.key === 'tagId' || p.key === 'measurementId')?.value || null
-  const metaPixelId = metaTag?.parameter?.find(p => p.key === 'pixelId' || p.key === 'pixel_id')?.value || null
-
-  console.log(`[GTM Web] GA4 tag: "${ga4Tag?.name}" (type=${ga4Tag?.type}), Meta tag: "${metaTag?.name}" (type=${metaTag?.type})`)
-
-  const convLinker = tags.find(t =>
-    t.type === 'gclidw' || t.type === 'awconv' ||
-    t.name.toLowerCase().includes('conversion linker') ||
-    t.name.toLowerCase().includes('linker')
-  )
-
-  const gAdsTags = tags.filter(t =>
-    t.type === 'awct' || t.type === 'google_ads_conversion' ||
-    t.name.toLowerCase().includes('google ads') ||
-    t.name.toLowerCase().includes('adwords') ||
-    t.name.toLowerCase().includes('conversion google')
-  )
-
+  // Enhanced Conversions (parameter-based)
   const ecTag = tags.find(t =>
-    t.parameter?.some(p => (p.key === 'enhancedConversions' || p.key === 'enhanced_conversions') && p.value === 'true') ||
-    t.name.toLowerCase().includes('enhanced conversion') ||
-    t.name.toLowerCase().includes('suivi avancé')
+    t.parameter?.some(p => (p.key === 'enhancedConversions' || p.key === 'enhanced_conversions') && p.value === 'true')
   )
 
-  const consentTags = tags.filter(t =>
-    t.type === 'html' &&
-    (t.name.toLowerCase().includes('consent') ||
-     t.name.toLowerCase().includes('cookieyes') ||
-     t.name.toLowerCase().includes('onetrust') ||
-     t.name.toLowerCase().includes('didomi') ||
-     t.name.toLowerCase().includes('axeptio') ||
-     t.name.toLowerCase().includes('cookiebot'))
-  )
-  const consentTemplateTag = tags.find(t =>
-    t.type?.toLowerCase().includes('consent') ||
-    t.type?.toLowerCase().includes('cmp') ||
-    consentTags.some(ct => ct.tagId === t.tagId)
-  ) || consentTags[0]
+  // Consent template
+  const consentTags = classified.filter(c => c.platform === 'consent').map(c => c.tag)
+  if (consentTags.length === 0) {
+    // Fallback: HTML tags with consent-related names
+    tags.forEach(t => {
+      if (t.type === 'html') {
+        const n = t.name.toLowerCase()
+        if (n.includes('consent') || n.includes('cookieyes') || n.includes('onetrust') ||
+            n.includes('didomi') || n.includes('axeptio') || n.includes('cookiebot'))
+          consentTags.push(t)
+      }
+    })
+  }
+  const consentTemplateTag = consentTags[0] || null
 
   let consentModeTemplateType: GTMChecks['consentModeTemplateType'] = null
   if (consentTemplateTag) {
@@ -564,54 +573,66 @@ function buildChecks(
 }
 
 // ─── Build checks for SERVER container ──────────────────────────────────────
+// Server-side tags also use parameter-based classification.
+// sGTM built-in types: sgtmgaaw (GA4), sgtmawc (Google Ads)
+// Community templates: use parameters (pixelId → Meta CAPI, etc.)
+
+const KNOWN_SS_GA4_TYPES = new Set(['sgtmgaaw', 'sgtmga4', ...KNOWN_GA4_TYPES])
+const KNOWN_SS_GADS_TYPES = new Set(['sgtmawc', 'sgtm_google_ads', ...KNOWN_GADS_TYPES])
+
+function classifyServerTag(tag: GTMTag): TagPlatform {
+  // 1. Parameter-based (most reliable)
+  const pixelId = getParamValue(tag, 'pixelId') || getParamValue(tag, 'pixel_id')
+    || getParamValue(tag, 'pixelid') || getParamValue(tag, 'datasetId') || ''
+  const tagId = getParamValue(tag, 'tagId') || getParamValue(tag, 'measurementId') || ''
+  const conversionId = getParamValue(tag, 'conversionId') || getParamValue(tag, 'conversion_id') || ''
+  const accessToken = getParamValue(tag, 'accessToken') || getParamValue(tag, 'apiAccessToken') || ''
+
+  if (pixelId || (accessToken && hasParam(tag, 'pixelId'))) return 'meta'
+  if (tagId.startsWith('G-') || tagId.startsWith('GT-')) return 'ga4'
+  if (conversionId.startsWith('AW-') || tagId.startsWith('AW-')) return 'gads'
+
+  // 2. Known sGTM built-in types
+  if (KNOWN_SS_GA4_TYPES.has(tag.type)) return 'ga4'
+  if (KNOWN_SS_GADS_TYPES.has(tag.type)) return 'gads'
+  if (KNOWN_META_TYPES.has(tag.type)) return 'meta'
+
+  // 3. Type string hints for community templates
+  const type = (tag.type || '').toLowerCase()
+  if (type.includes('facebook') || type.includes('meta') || type.includes('capi')
+    || type.includes('fb_conversions') || type.includes('conversion_api')) return 'meta'
+  if (type.includes('ga4') || type.includes('google_analytics') || type.includes('gaaw')) return 'ga4'
+  if (type.includes('google_ads')) return 'gads'
+
+  return 'unknown'
+}
+
 function buildServerChecks(
   tags: GTMTag[],
   triggers: GTMTrigger[],
   variables: GTMVariable[]
 ): GTMServerChecks {
 
-  // Meta CAPI tag — detect FIRST to exclude from GA4 matching
-  // Types: community templates vary but names/types contain facebook, meta, capi, conversions_api, fb_conversions
-  const metaCAPITag = tags.find(t => {
-    const type = (t.type || '').toLowerCase()
-    const name = t.name.toLowerCase()
-    return type.includes('facebook') || type.includes('meta') || type.includes('capi')
-      || type.includes('fb_conversions') || type.includes('conversion_api')
-      || name.includes('fb_conversions') || name.includes('conversions_api')
-      || name.includes('capi') || name.includes('conversion api')
-      || (name.includes('meta') && !name.includes('metadata'))
-      || (name.includes('facebook') && name.includes('server'))
-  })
-  const metaCAPIPixelId = metaCAPITag?.parameter?.find(p =>
-    p.key === 'pixelId' || p.key === 'pixel_id' || p.key === 'pixelid' || p.key === 'datasetId'
-  )?.value
-    // Also try to extract pixel ID from tag name (e.g. FB_CONVERSIONS_API-993896383378275-Server-Tag)
-    || metaCAPITag?.name.match(/(\d{10,})/)?.[1]
-    || null
+  const classified = tags.map(t => ({ tag: t, platform: classifyServerTag(t) }))
+  console.log(`[GTM SS] Classified tags:`, classified.map(c => `"${c.tag.name}" → ${c.platform} (type=${c.tag.type})`))
 
-  // GA4 Server tag (sGTM) — exclude Meta CAPI tags
-  const ga4ServerTag = tags.find(t => {
-    if (metaCAPITag && t.tagId === metaCAPITag.tagId) return false
-    const type = (t.type || '').toLowerCase()
-    const name = t.name.toLowerCase()
-    return type === 'sgtmgaaw' || type === 'sgtmga4' || type.includes('ga4')
-      || type.includes('google_analytics') || type.includes('gaaw')
-      || (name.includes('ga4') && !name.includes('fb_') && !name.includes('conversions_api'))
-      || name.includes('google analytics')
-  })
+  // Meta CAPI
+  const metaCAPITag = classified.find(c => c.platform === 'meta')?.tag || null
+  const metaCAPIPixelId = metaCAPITag
+    ? (getParamValue(metaCAPITag, 'pixelId') || getParamValue(metaCAPITag, 'pixel_id')
+      || getParamValue(metaCAPITag, 'pixelid') || getParamValue(metaCAPITag, 'datasetId')
+      || metaCAPITag.name.match(/(\d{10,})/)?.[1] || null)
+    : null
 
-  // Google Ads Server tag
-  const gAdsServerTag = tags.find(t =>
-    t.type === 'sgtmawc' || t.type === 'sgtm_google_ads' ||
-    t.type?.toLowerCase().includes('google_ads') ||
-    t.name.toLowerCase().includes('google ads') ||
-    t.name.toLowerCase().includes('adwords')
-  )
+  // GA4 Server
+  const ga4ServerTag = classified.find(c => c.platform === 'ga4')?.tag || null
 
-  // Enhanced Conversions server-side
+  // Google Ads Server
+  const gAdsServerTag = classified.find(c => c.platform === 'gads')?.tag || null
+
+  // Enhanced Conversions (parameter-based)
   const ecServerTag = tags.find(t =>
-    t.parameter?.some(p => (p.key === 'enhancedConversions' || p.key === 'enhanced_conversions') && p.value === 'true') ||
-    t.name.toLowerCase().includes('enhanced conversion')
+    t.parameter?.some(p => (p.key === 'enhancedConversions' || p.key === 'enhanced_conversions') && p.value === 'true')
   )
 
   const pausedTags = tags.filter(t => t.paused).map(t => t.name)
@@ -621,7 +642,7 @@ function buildServerChecks(
 
   return {
     hasServerContainer: true,
-    serverContainerName: null, // filled by caller
+    serverContainerName: null,
     serverPublicId: null,
     totalTagCount: tags.length,
     tags,
